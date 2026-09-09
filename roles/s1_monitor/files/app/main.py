@@ -31,6 +31,7 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 from cache import cache
 from queries import fleet as qfleet
+from queries import device as qdevice
 NOW_OVERRIDE = None   # tests set a fixed time
 
 
@@ -87,6 +88,30 @@ async def api_meta():
 async def api_fleet(customer: str = ""):
     key = f"fleet|{customer}"
     return await in_thread(_cached, key, settings.cache_ttl_live, lambda: qfleet.build_fleet(run_query, settings, current_time(), customer or None))
+
+
+@app.get("/api/device/{device_id}")
+async def api_device(device_id: int):
+    payload = await in_thread(lambda: cache.get_or_build(f"device|{device_id}", settings.cache_ttl_live,
+                                                          lambda: qdevice.build_device(run_query, settings, current_time(), device_id)))
+    if payload is None:
+        raise HTTPException(status_code=404, detail="unknown device")
+    return JSONResponse(payload)
+
+
+@app.get("/api/device/{device_id}/series")
+async def api_device_series(device_id: int, range: str = "90d"):
+    if range not in ("24h", "48h", "7d", "30d", "90d"):
+        raise HTTPException(status_code=400, detail="unknown range")
+    ttl = settings.cache_ttl_live if range in ("24h", "48h") else settings.cache_ttl_history
+    try:
+        payload = await in_thread(lambda: cache.get_or_build(f"series|{device_id}|{range}", ttl,
+                                                              lambda: qdevice.build_series(run_query, settings, current_time(), device_id, range)))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}")
+    if payload is None:
+        raise HTTPException(status_code=404, detail="unknown device")
+    return JSONResponse(payload)
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
