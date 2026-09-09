@@ -2,6 +2,7 @@
 const main=document.getElementById('main');
 let CUST=''; const charts=[]; function dispose(){ while(charts.length) charts.pop().dispose(); }
 let RANGE='90d', COMPARE=[], CMP_OPEN=false, BELL_OPEN=false, ATTENTION=[];
+let METRIC='good_read_pct', TWIN=30, TSUB='tiles';
 /* Every page renderer carries the token of the render that started it and drops out after each
    await if a newer render has begun, so a slow fetch can never paint over a newer route. */
 let RENDER_SEQ=0;
@@ -189,7 +190,70 @@ async function renderDevice(arg,my){
   if(slot) drawHost(d,H,slot);
 }
 
-/* ---------- TRENDS lands in the next task ---------- */
-async function renderTrends(){ main.innerHTML='<h1>Trends</h1><div class="notice">Coming in the next task</div>'; }
+/* ---------- TRENDS ---------- */
+const TM={items:{name:'Items per day',good:'up'},good_read_pct:{name:'Good read %',good:'up'},no_dim_pct:{name:'No dimension %',good:'down'},hand_scan_pct:{name:'Hand scanned %',good:'down'},not_sent_pct:{name:'Not sent %',good:'down'}};
+function goTrends(sub){ const h='#trends/'+sub; if(location.hash===h) render(); else location.hash=h; }
+async function renderTrends(arg,my){
+  if(arg==='table'||arg==='tiles') TSUB=arg;
+  const m=TM[METRIC]||TM.good_read_pct;
+  const R=await API.get('/api/trends?metric='+METRIC+'&range='+TWIN+'d'+(CUST?'&customer='+encodeURIComponent(CUST):''));
+  if(my!==RENDER_SEQ) return;
+  const ds=R.devices||[], wow=R.wow||[]; const isPct=METRIC!=='items';
+  let h='<h1>Trends</h1><p class="sub">'+(TSUB==='tiles'?'Every device on the same scale so drift stands out. One point per day, each panel with its own average and warn line.':'This week so far against the median of the previous four full weeks, worst change first.')+'</p>'
+    +'<div class="subnav"><a class="'+(TSUB==='tiles'?'on':'')+'" data-sub="tiles">Machines</a><a class="'+(TSUB==='table'?'on':'')+'" data-sub="table">Week over week</a></div>';
+  h+='<div class="toolrow"><select class="sel" id="msel">'+Object.entries(TM).map(([k,v])=>'<option value="'+k+'"'+(k===METRIC?' selected':'')+'>'+esc(v.name)+'</option>').join('')
+    +'</select><span class="seg" id="twin">'+[7,30,90].map(w=>'<button class="'+(w===TWIN?'on':'')+'" data-w="'+w+'">'+w+' days</button>').join('')+'</span>'
+    +(R.hidden?'<span class="hint">'+R.hidden+' devices hidden: metric does not apply to their customer</span>':'')+'</div>';
+  if(TSUB==='tiles') h+='<div class="multiples">'+ds.map(d=>'<div class="mini" id="miniBox'+d.id+'"><div class="t"><b>'+esc(label(d))+'</b><span style="margin-left:auto">'+esc(d.customer)+'</span></div><div class="c" id="mini'+d.id+'"></div></div>').join('')+'</div>';
+  if(TSUB==='table') h+='<table class="wow"><thead><tr><th>Device</th><th class="r">This week</th><th class="r">Median of previous 4</th><th class="r">Change</th><th>Last 5 weeks</th></tr></thead><tbody id="wowbody"></tbody></table>';
+  main.innerHTML=h;
+  document.getElementById('msel').onchange=e=>{ METRIC=e.target.value; render(); };
+  main.querySelectorAll('.subnav a').forEach(a=>a.onclick=()=>{ goTrends(a.dataset.sub); });
+  main.querySelectorAll('#twin button').forEach(b=>b.onclick=()=>{ TWIN=Number(b.dataset.w); render(); });
+
+  if(TSUB==='tiles'){
+    for(const d of ds){
+      const rows=(d.daily||[]).map(r=>{ const p=r.ts.split('-').map(Number); return {x:Date.UTC(p[0],p[1]-1,p[2]),v:r.value,low:r.low_volume}; });
+      const el=document.getElementById('mini'+d.id); if(!el) continue;
+      el.onclick=()=>{ location.hash='device/'+d.id; };
+      const ch=echarts.init(el); charts.push(ch);
+      attachDownload(document.getElementById('miniBox'+d.id),ch,{title:label(d)+' · '+m.name+', last '+TWIN+' days',sub:d.customer+(isPct&&d.warn!=null?' · warn '+fpct(d.warn):''),name:[d.customer,d.location,d.machine_name,m.name,TWIN+'d']});
+      const tt=document.querySelector('#miniBox'+d.id+' .t span');
+      if(tt) tt.textContent=d.customer+(d.average!=null?' · avg '+(isPct?fpct(d.average):num(Math.round(d.average))):'');
+      const ml=[]; if(isPct&&d.warn!=null) ml.push(dashed(Number(d.warn),C.warn,'')); if(d.average!=null) ml.push(dashed(Number(d.average),C.ink3,''));
+      const ymax=isPct?100:Math.max(1,...rows.map(r=>r.v||0));
+      const xmin=rows.length?rows[0].x-DAY/2:undefined, xmax=rows.length?rows[rows.length-1].x+DAY/2:undefined;
+      ch.setOption(Object.assign(base(),{grid:{left:36,right:6,top:10,bottom:20},
+        xAxis:{type:'time',min:xmin,max:xmax,axisLabel:{color:C.ink3,fontSize:10,hideOverlap:true,formatter:v=>{const dd=new Date(v);return dd.getUTCDate()+' '+MON[dd.getUTCMonth()];}},axisLine:{lineStyle:{color:C.line}},axisTick:{show:false},splitLine:{show:false}},
+        yAxis:Object.assign({},AX,{type:'value',min:0,max:ymax,interval:isPct?25:undefined,axisLabel:{color:C.ink3,fontSize:10,formatter:v=>isPct?v:(v>=1000?(v/1000)+'k':v)}}),
+        tooltip:Object.assign({trigger:'axis',formatter:ps=>{ const p=ps.find(x=>x.value[1]!=null); if(!p) return ''; const r=rows.find(x=>x.x===p.value[0]); return '<div style="color:'+C.ink2+'">'+fmtS(p.value[0],'day')+'</div><b>'+(isPct?fpct(p.value[1]):num(p.value[1]))+'</b> <span style="color:'+C.ink2+'">'+esc(m.name)+(r&&r.low?' · under '+MIN_ITEMS+' items':'')+'</span>'; }},TIP),
+        series:[ isPct
+          ? {type:'line',data:rows.map(r=>[r.x,r.low?null:r.v]),lineStyle:{width:1.5,color:C.info},symbol:'circle',symbolSize:TWIN<=30?5:3,itemStyle:{color:C.info},markLine:{silent:true,symbol:'none',animation:false,data:ml}}
+          : {type:'bar',data:rows.map(r=>[r.x,r.v]),barMaxWidth:10,itemStyle:{color:C.ink2,borderRadius:[2,2,0,0]},markLine:{silent:true,symbol:'none',animation:false,data:ml}}
+        ].concat(isPct?[{type:'scatter',data:rows.filter(r=>r.low&&r.v!=null).map(r=>[r.x,Math.max(0,r.v)]),symbolSize:5,itemStyle:{color:C.panel,borderColor:C.ink3,borderWidth:1.2}}]:[])}));
+    }
+  }
+  if(my!==RENDER_SEQ) return;
+
+  if(TSUB==='table'){
+    const isItems=METRIC==='items';
+    const thresh=isItems?5:1;
+    const fv=v=>v==null?'<span style="color:var(--ink-3)">under '+MIN_ITEMS+' items</span>':(isItems?num(Math.round(v)):v.toFixed(1)+'%');
+    const body=document.getElementById('wowbody');
+    if(body) body.innerHTML=wow.map(w=>{
+      const dl=isItems?w.delta_pct:w.delta_abs;
+      const goodDir=dl==null?null:((dl>0)===(m.good==='up'));
+      const cls=dl==null||Math.abs(dl)<thresh?'':goodDir?'up':'down';
+      const txt=dl==null?'–':(dl>0?'+':'')+(isItems?dl.toFixed(1)+'%':dl.toFixed(1)+' pts');
+      const last5=w.last5||[]; const vals=last5.filter(v=>v!=null);
+      const spmin=isItems?0:(vals.length?Math.max(0,Math.min.apply(null,vals)-5):0), spmax=isItems?undefined:100;
+      return '<tr><td>'+esc(w.label)+' <span style="color:var(--ink-3)">'+esc(w.customer)+'</span></td>'
+        +'<td class="r tnum">'+fv(w.this_week)+'</td>'
+        +'<td class="r tnum">'+fv(w.prev4_median)+(isItems?' <span style="color:var(--ink-3)">to the same point in the week</span>':'')+'</td>'
+        +'<td class="r tnum"><span class="delta '+cls+'">'+txt+'</span></td>'
+        +'<td>'+spark(last5.map(v=>({y:v})),{w:90,h:20,bars:true,color:C.muted,min:spmin,max:spmax})+'</td></tr>';
+    }).join('');
+  }
+}
 
 boot();
