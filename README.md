@@ -140,7 +140,8 @@ built into an image on the host.
 | `grafana` | `grafana` | `grafana/grafana-oss` | `/opt/grafana` | Broker and system health dashboards over an MSSQL datasource. Dashboards come from a separate repo via Grafana Git Sync, and orgs and users are provisioned through the HTTP API on each deploy. See [Grafana](#grafana). |
 | `marketing_display` | `marketing_display` | built `marketing-display:latest` | `/opt/marketing-display` | FastAPI plus static HTML and Chart.js "S1 Remote Monitoring" status page (`/` and `history.html`). Read-only over the RM database with a 30 s cache. |
 | `scan_fleet_dashboard` | `scan_fleet_dashboard` | built `scan-fleet-dashboard:latest` | `/opt/scan-fleet-dashboard` | FastAPI JSON API for the fleet dashboard: customers, machines, performance, throughput KPIs, intraday and per-machine views, per-customer thresholds and optional per-user customer scoping (`AUTH_ENABLED`). Runs side-by-side with `marketing_display` until cutover. |
-| `s1_reporter` | `s1_reporter` and `s1_reporter_charts` | built `s1-reporter:latest`, `nginx:alpine` | `/opt/s1-reporter` | Scheduler loop in `entrypoint.sh`: device-status DB sync every 20 min, offline/recovery alerts and upload-failure checks every 20 min on weekdays, daily report at 06:00, monthly report on the 1st at 06:30, weekly baseline recompute Sunday 02:00. Posts Adaptive Cards to Microsoft Teams via a Power Automate webhook. Chart PNGs land on a shared volume that nginx serves as `charts.sysone.co.za`. |
+| `s1_reporter` | `s1_reporter` and `s1_reporter_charts` | built `s1-reporter:latest`, `nginx:alpine` | `/opt/s1-reporter` | Scheduler loop in `entrypoint.sh`: device-status DB sync every 20 min, offline/recovery alerts and upload-failure checks every 20 min on weekdays, daily report at 06:00, monthly report on the 1st at 06:30. Posts Adaptive Cards to Microsoft Teams via a Power Automate webhook. Chart PNGs land on a shared volume that nginx serves as `charts.sysone.co.za`. |
+| `s1_baselines` | none (one-shot via `compose run`) | built `s1-baselines:latest` | `/opt/s1-baselines` | Recomputes `dbo.alert_thresholds` from 60 days of `device_statistics`. Host cron runs `run-baselines.sh apply` every Sunday 02:00; operators run `run-baselines.sh dry-run` to preview. Owns the table's DDL via `migrate`. |
 | `s1_dashboard` | none (host process) | none | `/opt/s1-dashboard` | Stdlib-only Python status screen on the physical console. Configures `getty@tty1` autologin for the deploy user and launches the dashboard from `.profile`. Shows today/week/year scan totals, host metrics, Docker health and a problems-only log pane. |
 | `backup` | none (cron) | `restic/restic:0.17` | `/opt/backup` | Nightly 02:30 restic backup of the RM database (`.bak`) and the Mosquitto volume to Backblaze B2. A pre-deploy gate in both plays refuses to run if the last successful backup is older than `backup_gate_max_age_hours`. Off by default (`backup_enabled: false`). See `roles/backup/README.md`. |
 | `systems_one_ingest` | none | none | none | **Retired.** The original ingestor, superseded by `mqtt_ingestor`. Not referenced by any play. The role and its tests are still in the repo. |
@@ -152,7 +153,8 @@ Which service talks to what:
 | `mqtt_ingestor` | writes `dbo.*`, `broker.broker_stats`, `ingest.*` | `mssql_rm_admin_login` (`admin`) |
 | `marketing_display`, `scan_fleet_dashboard`, `s1_dashboard` | read `S1_Remote_Monitoring` | `admin` |
 | `grafana` | reads `S1_Remote_Monitoring` via the provisioned MSSQL datasource | `admin` |
-| `s1_reporter` | reads telemetry, writes `dbo.device_status` and `alert_thresholds` baselines | `sa` (see rough edges) |
+| `s1_reporter` | reads telemetry, writes `dbo.device_status` | `sa` (see rough edges) |
+| `s1_baselines` | reads `device_statistics`, writes `alert_thresholds` | `admin` |
 | `nodered` | publishes to `mosquitto` | vault MQTT user |
 | `backup` | dumps `mssql`, tars the Mosquitto volume | `sa` inside the container |
 
@@ -246,7 +248,7 @@ ansible-playbook -i production dbservers.yml                         # mssql and
 ```
 
 Roles that carry tags: `mqtt_ingestor`, `s1_reporter`, `marketing_display`,
-`scan_fleet_dashboard`. Using `--tags` skips untagged tasks, which is why the vault-loading
+`scan_fleet_dashboard`, `s1_baselines`. Using `--tags` skips untagged tasks, which is why the vault-loading
 and backup-gate pre-tasks are tagged `always`.
 
 GitHub Actions (`.github/workflows`):
@@ -323,7 +325,7 @@ python -m pytest roles/scan_fleet_dashboard/tests
 
 Starting points for the overhaul, all confirmed against the repo or the live host:
 
-- `s1_reporter` connects as `sa`. Everything else uses the least-privilege `admin` login.
+- `s1_reporter` connects as `sa`. Everything else, including `s1_baselines`, uses the least-privilege `admin` login.
 - `mssql_rm_admin_password` is plain text in `group_vars/dbservers.yml`, not in the vault.
 - `roles/systems_one_ingest` is retired but still shipped and still tested in CI.
 - The Deploy and Rollback workflows only cover `webservers.yml`.
