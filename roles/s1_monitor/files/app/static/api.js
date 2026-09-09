@@ -6,11 +6,12 @@ let NOW=new Date(), TZ=2, MIN_ITEMS=100, MIN_HOUR=30, MIN_RAW=15, GAP_MIN=11, ST
 
 const API = {
   meta:null,
-  async get(path){
+  /* banner:false for background refreshes, so only the page's own loads move the stale banner */
+  async get(path,{banner:useBanner=true}={}){
     const r=await fetch(path,{cache:'no-store'});
     let body=null; try{ body=await r.json(); }catch(e){}
     if(!r.ok) throw new ApiError(r.status,(body&&body.detail)||r.statusText);
-    const banner=document.getElementById('banner');
+    const banner=useBanner?document.getElementById('banner'):null;
     if(banner){
       if(body&&body.stale){ banner.textContent='Showing data from '+fmt(t(body.stale_since))+' SAST, database unreachable'; banner.classList.add('on'); }
       else banner.classList.remove('on');

@@ -2,6 +2,9 @@
 const main=document.getElementById('main');
 let CUST=''; const charts=[]; function dispose(){ while(charts.length) charts.pop().dispose(); }
 let RANGE='90d', COMPARE=[], CMP_OPEN=false, BELL_OPEN=false, ATTENTION=[];
+/* Every page renderer carries the token of the render that started it and drops out after each
+   await if a newer render has begun, so a slow fetch can never paint over a newer route. */
+let RENDER_SEQ=0;
 
 async function boot(){
   try{ await API.loadMeta(); }catch(e){ errorPanel(main,e); return; }
@@ -18,13 +21,17 @@ async function boot(){
 }
 
 async function render(){
+  const my=++RENDER_SEQ;
   dispose(); window.scrollTo(0,0);
   const [route,arg,arg2,arg3]=(location.hash||'#fleet').slice(1).split('/');
-  if(route==='device'&&arg2) RANGE=arg2;
-  if(route==='device'&&arg3&&arg3.startsWith('cmp=')) COMPARE=arg3.slice(4).split(',').map(Number).filter(Boolean);
+  if(route==='device'){
+    if(arg2) RANGE=arg2;
+    COMPARE=(arg3&&arg3.startsWith('cmp='))?arg3.slice(4).split(',').map(Number).filter(Boolean):[];
+  }
   document.querySelectorAll('[data-nav]').forEach(a=>a.classList.toggle('on',a.dataset.nav===route));
-  try{ await ({fleet:renderFleet,device:renderDevice,trends:renderTrends}[route]||renderFleet)(arg); }
-  catch(e){ errorPanel(main,e); }
+  try{ await ({fleet:renderFleet,device:renderDevice,trends:renderTrends}[route]||renderFleet)(arg,my); }
+  catch(e){ if(my!==RENDER_SEQ) return; errorPanel(main,e); }
+  if(my!==RENDER_SEQ) return;
   document.getElementById('clock').textContent='Data as of '+fmt(NOW.getTime())+' SAST';
   renderBell();
   if(route&&route!=='fleet') refreshAttention();
@@ -34,7 +41,7 @@ async function render(){
 /* Off the fleet page the bell has no payload of its own, so refresh it in the background. */
 async function refreshAttention(){
   try{
-    const F=await API.get('/api/fleet'+(CUST?'?customer='+encodeURIComponent(CUST):''));
+    const F=await API.get('/api/fleet'+(CUST?'?customer='+encodeURIComponent(CUST):''),{banner:false});
     ATTENTION=F.attention||[]; renderBell();
   }catch(e){ /* the page itself already reports API failures */ }
 }
@@ -58,8 +65,9 @@ function renderBell(){
 /* ---------- FLEET ---------- */
 function tile(l,v,sev,d,sz){ return '<div class="tile"><div class="l">'+l+'</div><div class="v '+(sz||'')+'">'+v+'</div>'+(d?'<div class="d"><span class="dot '+sev+'"></span>'+d+'</div>':'')+'</div>'; }
 
-async function renderFleet(){
+async function renderFleet(arg,my){
   const F=await API.get('/api/fleet'+(CUST?'?customer='+encodeURIComponent(CUST):''));
+  if(my!==RENDER_SEQ) return;
   NOW=new Date(F.generated_utc); ATTENTION=F.attention||[];
   const ds=F.devices||[]; const S=F.strip||{};
   const wAge=S.db_write_age_s==null?null:S.db_write_age_s/60;
@@ -103,8 +111,85 @@ async function renderFleet(){
   main.querySelectorAll('table.dev tr.d').forEach(r=>r.onclick=()=>{ location.hash='device/'+r.dataset.id; });
 }
 
-/* ---------- DEVICE and TRENDS land in the next tasks ---------- */
-async function renderDevice(){ main.innerHTML='<h1>Device</h1><div class="notice">Coming in the next task</div>'; }
+/* ---------- DEVICE ---------- */
+const devHash=id=>'device/'+id+'/'+RANGE+(COMPARE.length?'/cmp='+COMPARE.join(','):'');
+/* navigate through the hash so back/forward and deep links keep working; re-render when it does not change */
+function goDevice(id){ const h='#'+devHash(id); if(location.hash===h) render(); else location.hash=h; }
+const uptimeD=s=>s?(Number(s)/86400).toFixed(1)+' days':'–';
+const numOr=(v,suffix)=>v==null?'–':Number(v).toFixed(0)+(suffix||'');
+
+async function renderDevice(arg,my){
+  const devices=(API.meta&&API.meta.devices)||[];
+  const id=Number(arg)||(devices.length?devices[0].id:0);
+  let d;
+  try{ d=await API.get('/api/device/'+id); }
+  catch(e){
+    if(my!==RENDER_SEQ) return;
+    if(e&&e.status===404){ main.innerHTML='<h1>Device</h1><div class="notice">Unknown device</div>'; return; }
+    throw e;   // 503 and the rest land in render()'s errorPanel
+  }
+  if(my!==RENDER_SEQ) return;
+  COMPARE=COMPARE.filter(x=>x!==id);
+  const S=await API.get('/api/device/'+id+'/series?range='+RANGE);
+  if(my!==RENDER_SEQ) return;
+  let cmp=[];
+  if(COMPARE.length){
+    cmp=(await Promise.all(COMPARE.map(async(cid,i)=>{
+      try{ return {d:await API.get('/api/device/'+cid),S:await API.get('/api/device/'+cid+'/series?range='+RANGE),col:CMPCOL[i%CMPCOL.length]}; }
+      catch(e){ return null; }
+    }))).filter(Boolean);
+    if(my!==RENDER_SEQ) return;
+    COMPARE=cmp.map(k=>k.d.id);
+  }
+
+  const cap=d.capabilities||{};
+  const caps=[cap.has_dimension?'dimension':null,cap.has_weight?'weight':null,cap.has_hand_scan?'hand scan':null].filter(Boolean);
+  const drives=d.drives||[];
+  const opts=devices.map(x=>'<option value="'+x.id+'"'+(x.id==id?' selected':'')+'>'+esc(x.customer+' · '+label(x))+'</option>').join('');
+  let h='<div class="devhead"><div class="id"><h1>'+esc(label(d))+'</h1><div class="meta">'+esc(d.customer)+' · serial '+esc(d.serial_number||'–')+'</div><div class="meta">'+esc(caps.join(', '))+'</div></div>'
+    +'<div class="kv"><span>State</span><b><span class="dot '+(STATE_DOT[d.state]||'off')+'"></span> '+esc(d.state||'–')+'</b><span>Last seen</span><b>'+(d.last_seen?ago(t(d.last_seen))+' ago':'never')+'</b>'
+    +'<span>App</span><b>'+(d.application_running==null?'–':d.application_running?'running':'stopped')+'</b><span>Uptime</span><b>'+uptimeD(d.uptime_seconds)+'</b></div>'
+    +'<div class="kv"><span>Drives</span><b>'+(drives.length?esc(drives.map(x=>x.drive+' '+numOr(x.usage_percent,'%')).join(', ')):'–')+'</b>'
+    +'<span>CPU</span><b>'+numOr(d.cpu_percent,'%')+'</b><span>Memory</span><b>'+numOr(d.mem_usage_pct,'%')+'</b><span>Temperature</span><b>'+(d.temp_celsius==null?'–':numOr(d.temp_celsius)+' °C')+'</b></div>'
+    +'<div class="kv"><span>OS</span><b>'+esc(d.os_version||'–')+'</b><span>Host history</span><b class="faint">starts when snapshots begin</b></div></div>';
+  const cmpDevs=devices.filter(x=>x.id!==id);
+  h+='<div class="toolrow"><select class="sel" id="devsel">'+opts+'</select>'
+    +'<span class="seg" id="rng">'+['7d','30d','90d'].map(r=>'<button class="'+(r===RANGE?'on':'')+'" data-r="'+r+'">'+r+'</button>').join('')+'</span>'
+    +'<span class="seg" id="rng2">'+['24h','48h'].map(r=>'<button class="'+(r===RANGE?'on':'')+'" data-r="'+r+'">'+r+' detail</button>').join('')+'</span>'
+    +'<span class="cmp"><button class="btn" id="cmpbtn">Compare with…</button><div class="menu" id="cmpmenu" '+(CMP_OPEN?'':'hidden')+'>'
+    +cmpDevs.map(x=>{ const on=COMPARE.includes(x.id); const col=on?CMPCOL[COMPARE.indexOf(x.id)%CMPCOL.length]:'';
+        return '<label><input type="checkbox" data-id="'+x.id+'" '+(on?'checked':'')+'><span class="sw" style="background:'+(col||'var(--ink-3)')+'"></span>'+esc(x.customer+' · '+label(x))+'</label>'; }).join('')
+    +'</div></span>'
+    +cmp.map((k,i)=>'<span class="chip"><span class="sw" style="background:'+CMPCOL[i%CMPCOL.length]+'"></span>'+esc(label(k.d))+' <span class="faint">'+esc(k.d.customer)+'</span><button data-rm="'+k.d.id+'" title="Remove">×</button></span>').join('')
+    +'<span class="hint">'+(S.style==='line'?'One point per day, in SAST.':'Bars per '+((RANGES[S.range]||{}).label||'bucket')+', in SAST.')+' Hover for the numbers.</span></div>';
+  h+='<div id="devbody"></div>';
+  main.innerHTML=h;
+  document.getElementById('devsel').onchange=e=>{ COMPARE=[]; location.hash='device/'+e.target.value+'/'+RANGE; };
+  main.querySelectorAll('#rng button,#rng2 button').forEach(b=>b.onclick=()=>{ RANGE=b.dataset.r; goDevice(id); });
+  document.getElementById('cmpbtn').onclick=e=>{ e.stopPropagation(); CMP_OPEN=!CMP_OPEN; document.getElementById('cmpmenu').hidden=!CMP_OPEN; };
+  document.getElementById('cmpmenu').onclick=e=>e.stopPropagation();
+  main.querySelectorAll('#cmpmenu input').forEach(cb=>cb.onchange=()=>{ const v=Number(cb.dataset.id); if(cb.checked){ if(!COMPARE.includes(v)) COMPARE.push(v); } else COMPARE=COMPARE.filter(x=>x!==v); goDevice(id); });
+  main.querySelectorAll('.chip button').forEach(b=>b.onclick=()=>{ COMPARE=COMPARE.filter(x=>x!==Number(b.dataset.rm)); goDevice(id); });
+  document.addEventListener('click',()=>{ if(CMP_OPEN){ CMP_OPEN=false; const m=document.getElementById('cmpmenu'); if(m) m.hidden=true; } },{once:true});
+
+  const body=document.getElementById('devbody');
+  drawFigures(d,S,cmp,body);
+  if(S.style==='line') drawHeat(d,S,body);
+  let H;
+  try{ H=await API.get('/api/device/'+id+'/health?range='+RANGE); }
+  catch(e){   // the host history is its own request; a failure there must not blank the figures
+    if(my!==RENDER_SEQ) return;
+    const slot=document.getElementById('devhost');
+    if(slot) slot.innerHTML='<div class="fig"><div class="pt"><b>Host history</b><span class="ptr">disk, memory, CPU, temperature, app restarts</span></div>'
+      +'<div class="notice" style="padding:8px 4px 10px">Host history is unavailable. '+esc(e&&e.status?'Error '+e.status+': '+e.message:String(e&&e.message||e))+'</div></div>';
+    return;
+  }
+  if(my!==RENDER_SEQ) return;
+  const slot=document.getElementById('devhost');
+  if(slot) drawHost(d,H,slot);
+}
+
+/* ---------- TRENDS lands in the next task ---------- */
 async function renderTrends(){ main.innerHTML='<h1>Trends</h1><div class="notice">Coming in the next task</div>'; }
 
 boot();
