@@ -44,6 +44,7 @@ flowchart LR
         gf["grafana :3000"]
         md["marketing_display :8090"]
         sfd["scan_fleet_dashboard :8092"]
+        mon["s1_monitor :8090"]
         rep["s1_reporter<br/>(host cron, one-shot)"]
         charts["s1_reporter_charts<br/>nginx :8091"]
         tty["s1_dashboard<br/>(TTY1 console)"]
@@ -63,6 +64,7 @@ flowchart LR
     db --> gf
     db --> md
     db --> sfd
+    db --> mon
     db --> rep
     rep -- "Adaptive Cards" --> teams
     rep -- "PNG charts" --> charts
@@ -74,6 +76,7 @@ flowchart LR
     cf --> gf
     cf --> md
     cf --> sfd
+    cf --> mon
     cf --> charts
 ```
 
@@ -87,7 +90,7 @@ machine in the `production` inventory:
 
 | Play | Group | Roles (in order) |
 |---|---|---|
-| `webservers.yml` | `webservers` | `docker`, `cloudflared`, `grafana`, `mqtt`, `nodered`, `mqtt_ingestor`, `s1_dashboard`, `s1_reporter`, `marketing_display`, `scan_fleet_dashboard`, `s1_baselines` |
+| `webservers.yml` | `webservers` | `docker`, `cloudflared`, `grafana`, `mqtt`, `nodered`, `mqtt_ingestor`, `s1_dashboard`, `s1_reporter`, `marketing_display`, `scan_fleet_dashboard`, `s1_monitor`, `s1_baselines` |
 | `dbservers.yml` | `dbservers` | `docker`, `mssql`, `backup` |
 
 `site.yml` imports both. `staging` is a second inventory with the same group layout
@@ -119,6 +122,7 @@ machine in the `production` inventory:
 | `127.0.0.1:8090` | marketing_display | Status page (container port 8000) | Loopback / tunnel |
 | `127.0.0.1:8091` | s1_reporter_charts | Report chart PNGs (nginx) | Loopback / tunnel |
 | `127.0.0.1:8092` | scan_fleet_dashboard | Fleet dashboard API (container port 8000) | Loopback / tunnel |
+| `127.0.0.1:8093` | s1_monitor | new status site (container port 8000), moves to 8090 at cutover | Loopback / tunnel |
 
 `scan_fleet_dashboard` defaults to 8091 but is pinned to 8092 in `host_vars/sysone.yml`
 because 8091 is already owned by the chart server.
@@ -140,6 +144,7 @@ built into an image on the host.
 | `grafana` | `grafana` | `grafana/grafana-oss` | `/opt/grafana` | Broker and system health dashboards over an MSSQL datasource. Dashboards come from a separate repo via Grafana Git Sync, and orgs and users are provisioned through the HTTP API on each deploy. See [Grafana](#grafana). |
 | `marketing_display` | `marketing_display` | built `marketing-display:latest` | `/opt/marketing-display` | FastAPI plus static HTML and Chart.js "S1 Remote Monitoring" status page (`/` and `history.html`). Read-only over the RM database with a 30 s cache. |
 | `scan_fleet_dashboard` | `scan_fleet_dashboard` | built `scan-fleet-dashboard:latest` | `/opt/scan-fleet-dashboard` | FastAPI JSON API for the fleet dashboard: customers, machines, performance, throughput KPIs, intraday and per-machine views, per-customer thresholds and optional per-user customer scoping (`AUTH_ENABLED`). Runs side-by-side with `marketing_display` until cutover. |
+| `s1_monitor` | `s1_monitor` | built `s1-monitor:latest` | `/opt/s1-monitor` | FastAPI plus static ECharts site "S1 Remote Monitoring" for fault diagnosis: Fleet, Device (summary, errors, daily figures, throughput heatmap, comparison, downloads), Trends. Records host health snapshots into `dbo.device_health_history` every 15 min. Replaces `marketing_display` and `scan_fleet_dashboard` at cutover. |
 | `s1_reporter` | one-shot `reporter` via `compose run`, plus `s1_reporter_charts` | built `s1-reporter:latest`, `nginx:alpine` | `/opt/s1-reporter` | Teams alerts and reports as host-cron jobs: `sync-status` every 20 min, `check-alerts` every 20 min on weekdays, `daily` 06:00 weekdays, `monthly` on the 1st, `stale-digest` Monday 07:00. Customer capabilities and limits live in `dbo.customer_config`; per-device `reporting_enabled` and `muted_until` on `dbo.devices`. Chart PNGs served by nginx as `charts.sysone.co.za`. |
 | `s1_baselines` | none (one-shot via `compose run`) | built `s1-baselines:latest` | `/opt/s1-baselines` | Recomputes `dbo.alert_thresholds` from 60 days of `device_statistics`. Host cron runs `run-baselines.sh apply` every Sunday 02:00; operators run `sudo /opt/s1-baselines/run-baselines.sh dry-run` to preview (the compose file and log are root-owned). Owns the table's DDL via `migrate`. |
 | `s1_dashboard` | none (host process) | none | `/opt/s1-dashboard` | Stdlib-only Python status screen on the physical console. Configures `getty@tty1` autologin for the deploy user and launches the dashboard from `.profile`. Shows today/week/year scan totals, host metrics, Docker health and a problems-only log pane. |
@@ -173,6 +178,7 @@ One database, `S1_Remote_Monitoring`, on the `mssql` container. The schema is cr
 | `broker.broker_stats` | ingestor | Mosquitto `$SYS` snapshots. |
 | `dbo.customer_config` | reporter `migrate`, edited by hand | Per-customer capabilities (dimension, weight, hand scan) and alert limits. |
 | `dbo.alert_thresholds` | `s1_baselines` | Per-device warn/bad thresholds from 60-day baselines. |
+| `dbo.device_health_history` | `s1_monitor` | 15-minute host health snapshots: status, app running, uptime, CPU, memory, temperature, drive usage. |
 | `ingest.pipeline_state`, `ingest.telemetry_deadletter` | ingestor | Pipeline bookkeeping and messages that failed every retry. |
 | `dbo.DailyStats`, `driver_log`, `ItemLog`, `TripInfo` | legacy `Systems_One` bootstrap | Older schema, only created when `mssql_bootstrap_enabled` is true. |
 
@@ -250,7 +256,7 @@ ansible-playbook -i production dbservers.yml                         # mssql and
 ```
 
 Roles that carry tags: `mqtt_ingestor`, `s1_reporter`, `marketing_display`,
-`scan_fleet_dashboard`, `s1_baselines`. Using `--tags` skips untagged tasks, which is why the vault-loading
+`scan_fleet_dashboard`, `s1_monitor`, `s1_baselines`. Using `--tags` skips untagged tasks, which is why the vault-loading
 and backup-gate pre-tasks are tagged `always`.
 
 GitHub Actions (`.github/workflows`):
@@ -305,6 +311,7 @@ Run tests locally:
 python -m unittest discover -s roles/s1_reporter/tests
 python -m unittest discover -s roles/mqtt_ingestor/tests
 python -m pytest roles/scan_fleet_dashboard/tests
+python -m pytest roles/s1_monitor/tests
 ```
 
 ## Grafana
@@ -333,8 +340,8 @@ Starting points for the overhaul, all confirmed against the repo or the live hos
 - The Deploy and Rollback workflows only cover `webservers.yml`.
 - Cloudflare public hostnames are not captured anywhere in the repo, and the host-network
   `cloudflared` constraint has already caused one production 502.
-- `marketing_display` and `scan_fleet_dashboard` overlap. The plan is for the latter to
-  replace the former.
+- `marketing_display` and `scan_fleet_dashboard` overlap. `s1_monitor` replaces both at
+  cutover.
 - `ppnam-sync`, `wetty` and the Eskom app share the host but sit outside Ansible.
 - `nodered` runs `nodered/node-red:latest` in production while staging pins `5.0`.
 - The `mqtt` role ships an empty `Caddyfile.j2` that nothing uses.

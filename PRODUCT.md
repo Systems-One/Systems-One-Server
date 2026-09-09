@@ -21,6 +21,7 @@ Fleet uptime assurance for Systems One's remote monitoring platform. Scan statio
 - UI surfaces deployed by roles in this repo:
   - `marketing_display` — FastAPI + static dark status page ("S1 Remote Monitoring", index + history views, Chart.js).
   - `scan_fleet_dashboard` — FastAPI dashboard with auth, thresholds, and throughput views.
+  - `s1_monitor` — new status site replacing `marketing_display` and `scan_fleet_dashboard`.
   - `s1_dashboard` — autologin kiosk-style Docker status display on the server.
   - Grafana — broker/system health dashboards.
 - Supporting services: Node-RED, `s1_reporter` (reports, charts, Microsoft Teams notifications), backups, cloudflared.

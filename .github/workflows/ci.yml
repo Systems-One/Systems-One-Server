@@ -54,6 +54,11 @@ jobs:
           pip install -r roles/mqtt_ingestor/files/app/requirements.txt
           python -m unittest discover -s roles/mqtt_ingestor/tests
 
+      - name: Run s1_monitor unit tests
+        run: |
+          pip install -r roles/s1_monitor/tests/requirements-dev.txt pyodbc
+          python -m pytest roles/s1_monitor/tests -q
+
       - name: Create placeholder vault password file
         run: echo "ci-placeholder" > .vault_pass
 

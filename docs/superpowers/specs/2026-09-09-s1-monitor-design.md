@@ -116,12 +116,11 @@ roles/s1_monitor/
       migrations/
         001_device_health_history.sql
       static/
-        index.html                    # Fleet
-        device.html                   # Device
-        trends.html                   # Trends
+        index.html                    # single page, hash routes #fleet, #device/<id>/<range>[/cmp=a,b], #trends[/tiles|/table]
         app.css                       # theme tokens, layout
         api.js                        # fetch wrapper, stale banner, bell
         charts.js                     # ECharts theme, figure builders, heatmap, doughnut, download
+        app.js                        # router, screen rendering, polling
         vendor/echarts.min.js         # pinned ECharts 5.5.1 UMD
   tests/
     conftest.py
@@ -318,7 +317,7 @@ Evaluated over today so far (SAST) per device, in this order:
 
 | Rule | bad | warn | Skipped when |
 |---|---|---|---|
-| no data | state `offline` or `never` | | stale, muted, disabled |
+| no data | state `offline` or `never` | | stale, muted, disabled (stale devices are excluded from every rule, matching the reporter) |
 | upload stuck | last 3 packets all `total_items > 0 AND not_sent > 0` | | |
 | good read | below `bad` | below `warn` | today items < `MIN_ITEMS_DAY` |
 | no-dim | above `bad` | above `warn` | not `has_dimension`, or low volume |
@@ -382,7 +381,8 @@ Body, top to bottom:
    are empty. Sequential blue ramp for magnitude so red only ever means "no data".
 7. **Outages in range** table (started, ended or "still silent", duration) beside **Host
    history** (disk, memory, CPU, temperature lines and app/reboot markers once snapshot rows
-   exist; a note about the start date until then).
+   exist; a note about the start date until then). If the host-history request fails, that
+   panel shows a local notice; the rest of the page still renders.
 
 Every figure (doughnut, items, good read, each rate, heatmap) has a download button that
 produces a 2x PNG with a header stamped in (device and figure name, customer, limits or
