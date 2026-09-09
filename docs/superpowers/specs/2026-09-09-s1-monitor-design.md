@@ -1,6 +1,6 @@
 # s1_monitor: fault-diagnosis website — Design
 
-**Date:** 2026-09-09
+**Date:** 2026-09-09 (revised the same day after a clickable demo review)
 **Target:** new role `roles/s1_monitor/`; retires `roles/marketing_display/` and
 `roles/scan_fleet_dashboard/` at cutover
 **Related:** `2026-09-09-s1-reporter-overhaul-design.md` (threshold and liveness semantics the
@@ -20,36 +20,42 @@ find. Profiling the live `S1_Remote_Monitoring` database on 2026-09-09 establish
   latest value per device (MERGE upserts). No history exists for them.
 - Volume is strongly seasonal: weekdays carry roughly ten times Sunday's items; 08:00 to 16:00
   SAST carries most of the day with a dip at 13:00.
-- Devices differ in volume by four orders of magnitude (40,140 items a week at PEPKOR JBH
-  DIM4, 1 at PEPKOR JBH DIM2). Percentages on low volumes are noise.
+- Devices differ in volume by four orders of magnitude. Percentages on low volumes are noise.
 - Metric meaning is per customer: PEPKOR reports `no_weight` equal to `total_items` because
   no scale is fitted; PEP STATIC devices never fill `complete`. `dbo.customer_config` carries
   the capability flags (`has_dimension`, `has_weight`, `has_hand_scan`).
-- `dbo.alert_thresholds` holds per-device warn/bad values plus a 60-day baseline mean,
-  stddev and percentiles for `good_read_pct` (low) and `no_dim_pct` (high). The current site
-  ignores it and hard-codes "target 98%, minimum 90%". DCB DUR's baseline mean is 65%, so
-  the fixed line is permanently red there.
+- `total_items = good_read + no_read` holds exactly. `hand_scanned`, `no_dimension`,
+  `no_weight`, `not_sent` and `more_than_1_item` are flags that overlap with those two and
+  with each other.
+- `dbo.alert_thresholds` holds per-device warn/bad values plus a 60-day baseline for
+  `good_read_pct` (low) and `no_dim_pct` (high). The current site ignores it and hard-codes
+  "target 98%, minimum 90%". DCB DUR's baseline mean is 65%, so the fixed line is
+  permanently red there.
 - The current site mixes `GETDATE()` with and without a +2h shift, so "today" starts at
   different times on different panels.
-- The current charts show one day of hourly bars and 7 or 14 days of daily lines with all
-  customers overlaid. No per-device timeline, no zoom, no threshold overlay, no outage history.
 
-Decisions taken with the product owner on 2026-09-09: internal ops audience with no login;
-primary questions are "why did quality drop on device X", "is something degrading slowly"
-and "is data getting through"; the site records its own health snapshots; plain FastAPI plus
-static pages with a vendored chart library, no JS build toolchain.
+The product owner's reference for legibility is the printed SLA inspection report
+(`PKL JHB SLA Inspections 10 December 2024.pdf`): one point per day with a marker, a dashed
+average line that states its value, a date-by-hour throughput heatmap with the number
+written in every cell, and a Maximum / Minimum / Average table under each figure.
+
+Decisions taken with the product owner on 2026-09-09, confirmed on a clickable demo built
+from a live data pull: internal ops audience with no login; good read is the headline
+metric; the site records its own health snapshots; plain FastAPI plus static pages with a
+vendored chart library, no JS build toolchain; no broker or pipeline screens.
 
 ## Goals
 
-1. Diagnose a quality fault on one device from a single screen: volume, every applicable
-   quality rate with its own warn/bad lines and baseline band, outages, app stops, and host
-   health, all on one shared, zoomable time axis.
-2. Surface slow degradation: like-for-like expected-volume bands and week-over-week deltas.
-3. Show pipeline health: broker, ingestor write age, dead letters, upload backlog.
+1. Diagnose a quality fault on one device from a single screen in the report's idiom:
+   summary table, daily figures with average and the device's own warn/bad lines, error
+   breakdown, throughput heatmap, outage list.
+2. Compare machines on the same figures.
+3. Surface slow degradation: small multiples per device and week-over-week deltas.
 4. One definition of "today", of a rate, of low volume, and of offline, shared with the
    reporter.
-5. Accumulate health history from deployment day onward.
-6. Replace `marketing_display` and `scan_fleet_dashboard` with one role on port 8090 so the
+5. Every figure downloadable as a labelled PNG with a meaningful filename.
+6. Accumulate host health history from deployment day onward.
+7. Replace `marketing_display` and `scan_fleet_dashboard` with one role on port 8090 so the
    Cloudflare route is untouched.
 
 ## Non-goals
@@ -57,9 +63,9 @@ static pages with a vendored chart library, no JS build toolchain.
 - Login, per-customer scoping or any use of `dbo.customer_login_map`.
 - Editing `customer_config`, `alert_thresholds` or device flags from the UI.
 - Changing `mqtt_ingestor`, `s1_reporter` or `s1_baselines`.
-- The TV/kiosk mode of the old page. The fleet screen is readable on a TV but nothing is
-  built specifically for it.
-- Alerting. Teams alerts remain the reporter's job.
+- Broker statistics, ingest gap views, or any pipeline screen. The only pipeline signal on
+  the site is the last database write age on the Fleet strip.
+- TV/kiosk mode. Alerting (Teams remains the reporter's job). PDF export.
 
 ## Architecture
 
@@ -67,15 +73,14 @@ static pages with a vendored chart library, no JS build toolchain.
 
 ```
 browser -- Cloudflare tunnel -- 127.0.0.1:8090 -- s1_monitor (uvicorn, one process)
-                                                    |-- FastAPI /api/*  (read: dbo.*, broker.*, ingest.*)
+                                                    |-- FastAPI /api/*  (read: dbo.*, ingest.pipeline_state)
                                                     |-- static pages + vendored ECharts
                                                     `-- asyncio snapshot task every 15 min
                                                           `-- writes dbo.device_health_history
 ```
 
-One container, one replica. The snapshot task lives in the API process. There is no
-second container and no host cron. The image is built on the host by Ansible like every
-other role.
+One container, one replica. The snapshot task lives in the API process. No second
+container, no host cron. The image is built on the host by Ansible like every other role.
 
 ### Role layout
 
@@ -96,28 +101,28 @@ roles/s1_monitor/
       config.py                       # env vars with defaults
       db.py                           # pyodbc connect, query(sql, params) -> list[dict], timeouts
       cache.py                        # TTL cache keyed by (endpoint, params); stale-on-error
-      timewin.py                      # SAST helpers, window parsing, resolution choice
-      rates.py                        # pure: bucket rate maths, low-volume flag
+      timewin.py                      # SAST helpers, range presets, bucket sizes
+      rates.py                        # pure: bucket rate maths, low-volume flag, summary stats
       availability.py                 # pure: outages from row timestamps; transitions from history
       severity.py                     # pure: needs-attention rules (mirrors reporter rules)
-      trends.py                       # pure: week-over-week deltas, expected-volume band
+      trends.py                       # pure: week-over-week deltas
+      thresholds.py                   # pure: lookup order device row -> customer row -> customer_config
       queries/
-        fleet.py                      # status strip, per-device today, sparklines
-        device.py                     # series, availability rows, health rows
-        trends.py                     # small multiples, hour-of-week baseline
-        pipeline.py                   # broker, ingest state, backlog
+        fleet.py                      # strip, per-device today and 30 days, 24h hourly sparkline
+        device.py                     # header, bucketed series, hourly rows, timestamps for outages
+        trends.py                     # daily per device over a window
+        health.py                     # history rows for the host section
       snapshots.py                    # health snapshot job, table DDL, pruning
       migrations/
         001_device_health_history.sql
       static/
         index.html                    # Fleet
-        device.html                   # Device diagnosis
+        device.html                   # Device
         trends.html                   # Trends
-        pipeline.html                 # Pipeline
         app.css                       # theme tokens, layout
-        api.js                        # fetch wrapper, stale banner
-        charts.js                     # ECharts theme, shared-axis helpers, band/line helpers
-        vendor/echarts.min.js         # pinned ECharts 5.x UMD, copied into the image
+        api.js                        # fetch wrapper, stale banner, bell
+        charts.js                     # ECharts theme, figure builders, heatmap, doughnut, download
+        vendor/echarts.min.js         # pinned ECharts 5.5.1 UMD
   tests/
     conftest.py
     test_timewin.py
@@ -125,8 +130,9 @@ roles/s1_monitor/
     test_availability.py
     test_severity.py
     test_trends.py
+    test_thresholds.py
     test_api.py                       # FastAPI TestClient with a fake query()
-    test_snapshots.py                 # snapshot row shaping and transition detection
+    test_snapshots.py
     test_role_files.py                # Dockerfile, compose template, defaults, vendor file present
 ```
 
@@ -140,7 +146,9 @@ roles/s1_monitor/
 | `DB_USER` | `admin` | `s1_monitor_db_user` (from `mssql_rm_admin_login`) |
 | `DB_PASS` | | `s1_monitor_db_pass` (from `mssql_rm_admin_password`) |
 | `TZ_OFFSET_HOURS` | `2` | `s1_monitor_tz_offset_hours` |
-| `MIN_ITEMS_FOR_RATES` | `100` | `s1_monitor_min_items_for_rates` |
+| `MIN_ITEMS_DAY` | `100` | `s1_monitor_min_items_day` |
+| `MIN_ITEMS_HOUR` | `30` | `s1_monitor_min_items_hour` |
+| `MIN_ITEMS_HALF_HOUR` | `15` | `s1_monitor_min_items_half_hour` |
 | `OFFLINE_GAP_MINUTES` | `11` | `s1_monitor_offline_gap_minutes` |
 | `STALE_DAYS` | `14` | `s1_monitor_stale_days` |
 | `SNAPSHOT_ENABLED` | `true` | `s1_monitor_snapshot_enabled` |
@@ -160,75 +168,86 @@ Same two-stage pattern as `marketing_display`: `python:3.12-slim-bookworm`, `mso
 `unixodbc`, pinned `fastapi`, `uvicorn[standard]`, `pyodbc`. Non-root `appuser`. Healthcheck
 hits `/health`, which returns 200 only if the last database query succeeded within
 `3 x CACHE_TTL_LIVE_SECONDS` or a probe query succeeds now. `static/vendor/echarts.min.js` is
-committed to the repo so the page works with no internet access from the browser.
+committed to the repo so the page works with no internet access from the browser. Inter is
+loaded from Google Fonts with a system-sans fallback, as the current site does.
 
 ## Data layer
 
-### Time and windows
+### Time and ranges
 
-Every endpoint that takes a window accepts `from` and `to` as ISO-8601 UTC or as a preset
-(`24h`, `7d`, `30d`, `90d`, `1y`). "Today", "this week" and day boundaries are computed in
-SAST by `DATEADD(HOUR, ?, ts_datetime)` with `TZ_OFFSET_HOURS` bound as a parameter. The
-API returns bucket timestamps as UTC ISO strings; the browser formats them in SAST.
+"Today", day boundaries and week boundaries are computed in SAST. In SQL this is done by a
+subquery that computes `local_ts = DATEADD(HOUR, ?, ts_datetime)` once, with
+`TZ_OFFSET_HOURS` bound as a parameter, and outer queries group on expressions of `local_ts`.
+(SQL Server rejects a parameterised expression that appears in both SELECT and GROUP BY,
+so the subquery form is mandatory.) The API returns bucket timestamps as UTC ISO strings;
+the browser formats them in SAST.
 
-Resolution is chosen by `timewin.resolution(window)`:
+Ranges are presets, not free windows. Each preset fixes its bucket:
 
-| Window | Bucket | Source |
-|---|---|---|
-| up to 2 days | 5 min (raw rows) | `device_statistics` rows as-is |
-| up to 14 days | 1 hour | `DATEADD(HOUR, DATEDIFF(HOUR, 0, local_ts), 0)` |
-| up to 120 days | 1 day | `CAST(local_ts AS date)` |
-| over 120 days | 1 week (Mon to Sun) | `DATEADD(DAY, -((DATEPART(WEEKDAY, local_ts)+5)%7), CAST(local_ts AS date))` with `SET DATEFIRST 7` semantics handled in Python |
+| Preset | Window | Bucket | Low-volume threshold | Figure style |
+|---|---|---|---|---|
+| `24h` | last 24 hours to now | 30 min | `MIN_ITEMS_HALF_HOUR` | bars |
+| `48h` | last 48 hours to now | 1 hour | `MIN_ITEMS_HOUR` | bars |
+| `7d` | 7 SAST days ending today | 1 day | `MIN_ITEMS_DAY` | line with markers |
+| `30d` | 30 SAST days ending today | 1 day | `MIN_ITEMS_DAY` | line with markers |
+| `90d` | 90 SAST days ending today | 1 day | `MIN_ITEMS_DAY` | line with markers |
 
-Responses carry `bucket_seconds` so the client can draw bar widths and decide when a zoom
-warrants a refetch (when the visible span drops below 4 buckets of the next finer resolution).
+Daily presets also fetch hourly buckets for the same window, for the heatmap and for the
+items-per-hour summary column. A bucket with no rows at all is returned as `nodata: true`
+(distinct from a bucket with rows and zero items).
 
 ### Rates
 
 A bucket's rate is `100 x SUM(part) / SUM(total_items)` over rows in the bucket. Rates are
-never averaged from per-row percentages. A bucket with `SUM(total_items) < MIN_ITEMS_FOR_RATES`
-is returned with `low_volume: true` and its rates present but flagged; the UI draws those
-points hollow and excludes them from the y-axis autoscale. Which rates a device gets:
+never averaged from per-row percentages. A bucket under its low-volume threshold carries
+`low_volume: true`; the UI draws it hollow and excludes it from averages. Which rates a
+device gets is decided by its customer's capabilities:
 
 | Rate | Formula | Shown when |
 |---|---|---|
 | `good_read_pct` | good_read / total_items | always |
+| `no_read_pct` | no_read / total_items | heatmap only, always |
 | `no_dim_pct` | no_dimension / total_items | `has_dimension` |
 | `no_weight_pct` | no_weight / total_items | `has_weight` |
 | `hand_scan_pct` | hand_scanned / total_items | `has_hand_scan` |
 | `not_sent_pct` | not_sent / total_items | always |
-| `multi_item_pct` | more_than_1_item / total_items | `has_dimension` |
+| `multi_item_pct` | more_than_1_item / total_items | `has_dimension`, error list only |
 
-### Thresholds and baselines
+**Every percentage axis is fixed at 0 to 100.** No autoscaling of rate axes anywhere.
 
-`queries.device.thresholds(device)` returns, per metric, `warn`, `bad`, `direction`,
-`baseline_mean`, `baseline_stddev`, `baseline_p10`, `baseline_p90` from `dbo.alert_thresholds`
-matched on `(customer, machine_name, location)`, falling back to the customer-wide row
-(`machine_name IS NULL AND location IS NULL`), then to `customer_config` percentages
-(`good_read_warn_pct`, `good_read_bad_pct`, `no_dim_warn_pct`, `no_dim_bad_pct`,
-`hand_scan_warn_pct`, `no_weight_warn_pct`). Storage limits come from `customer_config`
-(`storage_warn_pct`, `storage_bad_pct`). The lookup order is the reporter's.
+### Summary statistics (report Tables 6 and 7)
 
-The expected-volume band is computed per device by `queries.trends.hour_of_week_profile`:
-for the trailing 8 weeks, group items per hour by `weekday x 24 + hour` (SAST) and take
-`PERCENTILE_CONT(0.25/0.5/0.75)`. The device series endpoint joins each bucket to its slot's
-quartiles (summed over the slots a daily or weekly bucket covers) and returns them as
-`expected_p25`, `expected_p50`, `expected_p75`. The band is drawn behind the volume bars.
+For the chosen range: Maximum, Minimum and Average of items per bucket over buckets with
+data; of good read % over buckets at or above the low-volume threshold; and of items per
+hour (daily presets, hours with at least one item) or items per 5-minute packet (detail
+presets, packets with at least one item). Computed in `rates.summary()` from the bucket
+list so the API and the UI cannot disagree.
+
+### Error breakdown
+
+The doughnut is a true partition of items: `good_read`, and `no_read` split into
+"recovered by hand scan" (`min(hand_scanned, no_read)`) and "not recovered" when the
+customer has hand scanning, otherwise a single `no_read` slice. Flags that overlap
+(`no_dimension`, `no_weight`, `not_sent`, `more_than_1_item`) are listed under the ring
+with counts and share of items, gated by capability, never drawn as slices. The panel
+states which flags are not measured on this machine.
+
+### Thresholds
+
+`thresholds.lookup(rows, cfg, customer, machine, location, metric)` returns `warn`, `bad`,
+`direction`, baseline fields and a `source` label, using the reporter's order: device row in
+`dbo.alert_thresholds`, then the customer-wide row (`machine_name IS NULL AND location IS
+NULL`), then `customer_config` percentages. Storage limits come from `customer_config`.
 
 ### Availability from cadence
 
 `availability.outages(timestamps, gap_minutes, window_end)` walks a device's row timestamps
-in order and emits `{start, end, minutes}` for each gap longer than `OFFLINE_GAP_MINUTES`,
-where `start` is the last row before the gap plus 5 minutes and `end` is the next row. If
-the final row is older than the gap, an open outage ends at `window_end` with `open: true`.
-The device endpoint fetches only `ts_datetime` for the window, which is cheap on
-`IX_device_statistics_ts (device_id, ts_datetime)`.
-
-Device state for the fleet screen follows the reporter's `liveness.classify`: `stale` when
-last seen is at least `STALE_DAYS` old, `never` when no rows, `offline` when last seen is at
-least `OFFLINE_GAP_MINUTES` old, else `online`. Devices with `reporting_enabled = 0` are shown
-greyed with a "reporting disabled" tag, never hidden. `muted_until` in the future shows a
-"muted" tag and drops the device from the needs-attention list.
+and emits `{start, end, minutes, open}` for each gap longer than `OFFLINE_GAP_MINUTES`,
+where `start` is the last row before the gap plus 5 minutes. Device state follows the
+reporter's `liveness.classify`: `stale` at or beyond `STALE_DAYS`, `never` with no rows,
+`offline` at or beyond `OFFLINE_GAP_MINUTES`, else `online`. Devices with
+`reporting_enabled = 0` are shown greyed with a tag, never hidden; `muted_until` in the
+future shows a tag and drops the device from needs-attention.
 
 ### Health history
 
@@ -240,7 +259,7 @@ CREATE TABLE dbo.device_health_history (
     id                  BIGINT IDENTITY(1,1) PRIMARY KEY,
     device_id           INT          NOT NULL,
     snapshot_utc        DATETIME2(0) NOT NULL,
-    status              NVARCHAR(40) NULL,     -- device_status.status
+    status              NVARCHAR(40) NULL,
     status_ts_utc       DATETIME2(0) NULL,
     application_running BIT          NULL,
     app_ts_utc          DATETIME2(0) NULL,
@@ -250,134 +269,138 @@ CREATE TABLE dbo.device_health_history (
     temp_celsius        DECIMAL(5,2) NULL,
     c_usage_percent     DECIMAL(5,2) NULL,
     max_usage_percent   DECIMAL(5,2) NULL,
-    drives_json         NVARCHAR(MAX) NULL,    -- [{"drive":"C:","total_gb":..,"free_gb":..,"usage_percent":..}]
-    last_stats_utc      DATETIME2(0) NULL      -- MAX(device_statistics.ts_datetime) at snapshot time
+    drives_json         NVARCHAR(MAX) NULL,
+    last_stats_utc      DATETIME2(0) NULL
 );
 CREATE INDEX IX_device_health_history_device_ts
     ON dbo.device_health_history (device_id, snapshot_utc);
 ```
 
-`snapshots.run_once(query, execute, now_utc)` reads one joined row per device from the
-latest-value tables and inserts one history row each. It runs every
-`SNAPSHOT_INTERVAL_MINUTES`, first run 60 seconds after startup. Once a day it deletes rows
-older than `SNAPSHOT_RETENTION_DAYS`. Failures are logged with the exception and retried at
-the next tick; they never stop the API. `SNAPSHOT_ENABLED=false` turns the task off entirely
-(used by the workstation dev compose so a laptop never writes history into production).
-
-Derived events from consecutive rows (`availability.transitions(rows)`):
-
-- **uptime reset**: `uptime_seconds` smaller than the previous row's by more than the
-  interval means the device rebooted at approximately `snapshot_utc - uptime_seconds`.
-- **app stopped / started**: `application_running` changes value.
-- **status change**: `status` changes value.
-
-The device screen's health lanes are empty until rows exist. The UI says "history starts
-<date>" using `MIN(snapshot_utc)` for that device.
+`snapshots.run_once(query, execute, now_utc)` inserts one row per device from the
+latest-value tables every `SNAPSHOT_INTERVAL_MINUTES`, first run 60 seconds after startup,
+pruning rows older than `SNAPSHOT_RETENTION_DAYS` once a day. Failures are logged and
+retried next tick. `SNAPSHOT_ENABLED=false` turns the task off (workstation dev compose).
+`availability.transitions(rows)` derives uptime resets, app stop/start and status changes
+from consecutive rows.
 
 ### Caching and failure
 
 `cache.get_or_build(key, ttl, builder)` keeps one entry per `(endpoint, sorted params)`.
-TTL is `CACHE_TTL_LIVE_SECONDS` when the window includes now and
-`CACHE_TTL_HISTORY_SECONDS` otherwise. On a builder exception with a cached entry, the entry
-is returned with `"stale": true` and `"stale_since"`; with no entry the endpoint returns
-503 `{ "detail": "<exception class>: <message>" }`. `api.js` shows a persistent top banner
-"Showing data from HH:MM, database unreachable" when `stale` is set, and an error panel on
-503. Every query runs with `QUERY_TIMEOUT_SECONDS` via pyodbc's `timeout`.
+TTL is `CACHE_TTL_LIVE_SECONDS` for the `24h`/`48h` presets and fleet, and
+`CACHE_TTL_HISTORY_SECONDS` for the daily presets and trends. On a builder exception with a
+cached entry, the entry is returned with `stale: true` and `stale_since`; with no entry the
+endpoint returns 503 `{detail}`. `api.js` shows a persistent banner "Showing data from
+HH:MM, database unreachable" when `stale` is set, and an error panel on 503. Every query
+runs with `QUERY_TIMEOUT_SECONDS`.
 
 ## API
 
 All endpoints are `GET`, JSON, no auth. Times are UTC ISO-8601. `device_id` is
-`dbo.devices.id`; machine names are never used as keys because `DIM1` repeats across sites.
+`dbo.devices.id`; machine names are never keys because `DIM1` repeats across sites.
 
 | Endpoint | Params | Returns |
 |---|---|---|
 | `/health` | | `{status, db_ok, last_query_utc, snapshot_last_utc}` |
-| `/api/meta` | | customers with capabilities, devices list (`id, customer, location, machine_name, serial_number, reporting_enabled, muted_until`), `tz_offset_hours`, `min_items_for_rates`, `history_since` |
-| `/api/fleet` | `customer?` | `strip` (online, offline, stale, never, disabled, last_db_write_utc, db_write_age_s, broker_clients, deadletter), `attention[]` (severity, device, rule, value, limit, since), `devices[]` (state, last_seen, today items/rates, 24h sparkline arrays of items and good_read_pct at hourly buckets, c_usage_percent, app_running) |
-| `/api/device/{id}` | | header: identity, state, last_seen, current health row, os_version, thresholds per metric, capabilities, history_since |
-| `/api/device/{id}/series` | `from, to` | `bucket_seconds`, `buckets[]` with `ts, items, good_read, no_read, no_dimension, no_weight, hand_scanned, not_sent, more_than_1_item, rates{...}, low_volume, expected_p25/p50/p75` |
-| `/api/device/{id}/availability` | `from, to` | `outages[]`, `events[]` (uptime_reset, app_stopped, app_started, status_change with ts and detail), `uptime_pct` |
-| `/api/device/{id}/health` | `from, to` | history rows thinned to at most 2,000 points: `ts, cpu_percent, mem_usage_pct, temp_celsius, c_usage_percent, max_usage_percent`, plus `drives_latest[]` |
-| `/api/trends` | `metric, from, to, customer?` | `bucket_seconds`, `devices[]` each with `series[]` and `warn`/`bad`; and `wow[]` rows: device, this_week, prev4_median, delta_abs, delta_pct, sparkline (last 5 weeks) |
-| `/api/pipeline` | `from, to` | `broker[]` (ts, clients_connected, load_msgs_recv_1min, msgs_received delta), `ingest` (last_db_write_utc, age_s, last_error_utc, deadletter_count), `ingest_gaps[]` (minutes with zero rows fleet-wide, merged into intervals), `backlog[]` (device, consecutive_not_sent_packets, total_not_sent, since) |
+| `/api/meta` | | customers with capabilities and limits, devices list (`id, customer, location, machine_name, serial_number, reporting_enabled, muted_until`), thresholds per device per metric (with `source`), `tz_offset_hours`, the three low-volume thresholds, `history_since` |
+| `/api/fleet` | `customer?` | `strip` (online, offline, stale, never, disabled, items_today, good_read_today_pct, items_30d, good_read_30d_pct, last_db_write_utc, db_write_age_s), `attention[]` (severity, device_id, rule, value, limit, since), `devices[]` (state, last_seen, today items and good_read_pct with low_volume, 30-day items and good_read_pct with low_volume, 24 hourly item counts, c_usage_percent, app_running) |
+| `/api/device/{id}` | | identity, state, last_seen, latest health row, os_version, drives, capabilities, thresholds per metric, `history_since` |
+| `/api/device/{id}/series` | `range` (preset) | `bucket_seconds`, `from`, `to`, `buckets[]` with `ts, nodata, items, good_read, no_read, no_dimension, no_weight, hand_scanned, not_sent, more_than_1_item, low_volume`, `hourly[]` (same shape, daily presets only), `packets_summary` (detail presets: max/min/avg items per packet), `summary` (max/min/avg per the rules above), `totals` (sums over the range), `outages[]` |
+| `/api/device/{id}/health` | `range` | history rows thinned to at most 2,000 points plus `events[]` from transitions; empty arrays with `history_since: null` until snapshots exist |
+| `/api/trends` | `metric, range (7d/30d/90d), customer?` | `devices[]` each with `daily[]` (`ts, value, items, low_volume`), `average`, `warn`; `wow[]` rows: device, this_week, prev4_median, delta_abs, delta_pct, last5[] |
 
-Validation: `from < to`, window at most 400 days, unknown `device_id` gives 404, unknown
-`metric` gives 400. `customer` filters by exact `dbo.devices.customer`.
+Validation: unknown `range` or `metric` gives 400, unknown `device_id` gives 404.
+`customer` filters by exact `dbo.devices.customer`. Comparison is client-side: the device
+page calls `/api/device/{id}/series` once per compared device.
 
 ### Needs-attention rules (`severity.py`)
 
-Evaluated over "today so far" (SAST) per device, in this order, first match per rule:
+Evaluated over today so far (SAST) per device, in this order:
 
 | Rule | bad | warn | Skipped when |
 |---|---|---|---|
 | no data | state `offline` or `never` | | stale, muted, disabled |
 | upload stuck | last 3 packets all `total_items > 0 AND not_sent > 0` | | |
-| good read | below `bad` | below `warn` | today items < `MIN_ITEMS_FOR_RATES` |
+| good read | below `bad` | below `warn` | today items < `MIN_ITEMS_DAY` |
 | no-dim | above `bad` | above `warn` | not `has_dimension`, or low volume |
 | hand scan | | above `hand_scan_warn_pct` | not `has_hand_scan`, or low volume |
 | no weight | | above `no_weight_warn_pct` | not `has_weight`, or low volume |
 | storage | C: above `storage_bad_pct` | above `storage_warn_pct` | |
 | app stopped | `application_running = 0` | | |
 
-Ordering of the list: bad before warn, then by how far past the limit, then device name.
+Ordering: bad before warn, then by how far past the limit, then device name.
 
 ## Screens
 
-Shared chrome: top bar with "S1 Remote Monitoring", nav (Fleet, Trends, Pipeline), customer
-filter, refresh countdown, stale banner slot. Dark palette and tokens from the current site
-(`#0f1117` background family, Inter with system fallback), semantic colours reserved for
-state: green online/ok, amber warn, red bad, blue informational, grey disabled/low-volume.
-Pages poll their endpoints every 60 seconds while visible.
+Shared chrome: top bar with "S1 Remote Monitoring", nav (Fleet, Device, Trends), customer
+filter, "Data as of HH:MM SAST", and a **bell** with a count badge (red if any bad item,
+amber if warnings only). Clicking the bell opens a panel listing needs-attention items;
+clicking an item opens that device at `24h`. Pages fill the full window width. Dark palette
+and tokens from the current site (`#0f1117` page, `#151a23` panels, Inter), semantic
+colours reserved for state: green ok, amber warn, red bad, blue informational, grey
+disabled or low volume. Pages poll every 60 seconds while visible.
 
 ### Fleet (`index.html`)
 
-1. Status strip: seven tiles (online, offline, stale, never, DB write age, broker clients,
-   dead letters). Tiles colour by state; DB write age turns amber over 10 minutes, red over
-   30.
-2. Needs attention: a list, empty state "Nothing needs attention", each row showing
-   severity dot, device (`machine_name @ location`, customer), rule, value against limit,
-   and "since" where known. Row click opens the device with a 24h window.
-3. Devices: one compact row per device grouped by customer: state dot and last seen, today
-   items, good read % (coloured against that device's own warn/bad), two 24-hour sparklines
-   (items, good read %), C: usage, app running. Sorted by customer, location, machine.
-   Disabled devices greyed at the bottom of their customer group.
+1. Strip of seven tiles: Online, Offline, Stale, Items today, Good read today, Good read 30
+   days, Last DB write (amber over 10 minutes, red over 30).
+2. Device table grouped by customer with a colour swatch per customer: device and serial,
+   state dot, last seen, items today, **good read today** (large, coloured against the
+   device's own warn/bad, hollow dot when under `MIN_ITEMS_DAY`), **good read 30 days**
+   (same treatment, weighted by items), items over the last 24 hours as a small bar
+   sparkline, C: drive meter coloured against storage limits, app running. Disabled devices
+   greyed with a tag. Row click opens the device.
+
+No needs-attention list on the page; it lives in the bell.
 
 ### Device (`device.html?id=`)
 
-Header: `machine_name @ location`, customer, serial, state and last seen, OS version, uptime,
-capability tags, "history starts <date>". Range picker: 24h, 7d, 30d, 90d, custom from/to.
-Charts stacked in one ECharts instance with `axisPointer.link` and a shared `dataZoom`
-(slider at the bottom plus drag-to-zoom inside; double-click resets):
+Header panel in four aligned columns: identity (name, customer, serial, capabilities),
+state (state, last seen, app, uptime), host (drives, CPU, memory, temperature), OS and
+history start. Tool row: device selector, range presets `7d 30d 90d`, detail presets
+`24h 48h`, **Compare with…** picker (checkbox list; chosen machines appear as removable chips
+and as extra series on every figure, categorical colours, legend), and a hint line.
 
-1. **Items per bucket** (bars) with the expected band (p25 to p75 shaded, p50 line).
-2. **Quality rates** (one line chart per applicable rate, `good_read_pct` first): warn and
-   bad as dashed `markLine`s in amber and red, baseline mean plus or minus stddev as a faint
-   band, low-volume points hollow. The y-axis floors at `min(lowest visible non-low-volume
-   point, bad line) - 5` rather than a fixed range.
-3. **Availability lane**: outages as red blocks, app-stopped as amber blocks, uptime resets
-   and status changes as markers, with `uptime_pct` for the window in the lane title.
-4. **Host health lanes** (only when history rows exist): C: usage with storage warn/bad
-   lines, memory %, CPU %, temperature.
+Body, top to bottom:
 
-Zoom refetch: when the visible span falls below 4 buckets at the next finer resolution,
-`api.js` refetches `series` for the visible range and swaps the data without resetting zoom.
+1. **Summary** (report Table 6 and 7): Maximum / Minimum / Average for items per bucket,
+   good read %, items per hour (daily) or per packet (detail); outage count and longest;
+   the device's warn and bad limits with their source; the low-volume rule in words.
+2. **Errors** doughnut for the range with the centre stating good read %, legend table with
+   counts and shares, "also flagged" list, and the not-measured line.
+3. **Total items** per bucket: daily presets draw a line with markers, weekends shaded;
+   detail presets draw bars with no-data buckets shaded grey. Dashed average line stating
+   its value.
+4. **Good read %**: same style, y fixed 0 to 100, dashed average, dashed warn (amber) and
+   bad (red) lines with values, hollow marks for low volume.
+5. **Other rates** that apply to the machine, in a row of smaller panels, each with average
+   and limits, y fixed 0 to 100.
+6. **Throughput heatmap** (daily presets only): rows are dates, columns hours 00 to 23,
+   value written in every cell at every range (rows 30px for 7d, 20px otherwise). A metric
+   selector in the header offers Items per hour, Good read %, No read %, and the applicable
+   error rates; percentage metrics use a fixed 0 to 100 scale and leave hours under
+   `MIN_ITEMS_HOUR` unlabelled. Hours with no rows are red; hours with rows and zero items
+   are empty. Sequential blue ramp for magnitude so red only ever means "no data".
+7. **Outages in range** table (started, ended or "still silent", duration) beside **Host
+   history** (disk, memory, CPU, temperature lines and app/reboot markers once snapshot rows
+   exist; a note about the start date until then).
+
+Every figure (doughnut, items, good read, each rate, heatmap) has a download button that
+produces a 2x PNG with a header stamped in (device and figure name, customer, limits or
+compared machines, data timestamp) and a filename
+`S1_<customer>_<location>_<machine>_<figure>_<range>_<yyyymmdd-hhmm>.png`.
 
 ### Trends (`trends.html`)
 
-Controls: metric (items, good_read_pct, no_dim_pct, hand_scan_pct, not_sent_pct,
-c_usage_percent), window (7d, 30d, 90d, 1y), customer. Small multiples: one panel per device
-on a shared y-scale, each with its own warn line where the metric has one, so a device that
-drifts stands out from its neighbours. Devices lacking the capability for the metric are
-omitted with a count note. Below, the week-over-week table: device, this week (Mon to now),
-median of the previous 4 full weeks, delta, 5-week sparkline; sorted by worst delta in the
-metric's bad direction.
+Sub-menu with two pages. Controls above both: metric (items, good read %, no dimension %,
+hand scanned %, not sent %) and window (7, 30, 90 days).
 
-### Pipeline (`pipeline.html`)
-
-Window 24h or 7d. Tiles: last DB write age, dead letters, broker clients connected against
-registered devices, broker uptime. Charts: broker clients over time; messages received per
-minute; ingest gap lane (fleet-wide minutes with zero rows). Table: upload backlog devices
-with consecutive failing packets, total not sent and since.
+- **Machines**: one tile per device on a shared scale (percentages 0 to 100), one marker per
+  day, the device's own warn line, the average stated in the tile title, hollow low-volume
+  points, a download button, click through to the device. Devices lacking the capability
+  are omitted with a count note.
+- **Week over week**: table of this week (Monday to now) against the median of the previous
+  four full weeks, delta, and a five-week sparkline, sorted worst first in the metric's bad
+  direction. Items compares to the same point in each previous week.
 
 ## Cutover
 
@@ -396,26 +419,22 @@ with consecutive failing packets, total not sent and since.
 
 ## Testing
 
-- **Unit (pytest, no database):** `timewin` presets, SAST day boundaries, resolution table;
-  `rates` sums and low-volume flag; `availability.outages` on synthetic timestamp lists
-  (no gaps, one gap, open gap at the end, gap exactly at the threshold) and `transitions`
-  (uptime reset, app stop/start, status change); `severity` ordering and every skip rule;
-  `trends` week-over-week with fewer than 4 previous weeks and with zero medians.
-- **API:** FastAPI `TestClient` with `db.query` replaced by a fake returning canned rows;
-  checks response shapes, 404/400 validation, stale flag on builder failure, 503 on cold
-  failure, `/health` semantics.
-- **Snapshots:** row shaping from a joined latest-values row; pruning SQL parameters;
-  scheduler tick does not raise when `execute` fails.
+- **Unit (pytest, no database):** `timewin` presets, SAST day and week boundaries, bucket
+  sizes; `rates` sums, low-volume flags per bucket size, summary statistics, doughnut
+  partition; `availability.outages` (no gaps, one gap, open gap, gap exactly at threshold)
+  and `transitions`; `severity` ordering and every skip rule; `trends` week-over-week with
+  fewer than 4 previous weeks and with zero medians; `thresholds` lookup order.
+- **API:** `TestClient` with `db.query` replaced by a fake returning canned rows; response
+  shapes, 400/404 validation, stale flag on builder failure, 503 on cold failure, `/health`.
+- **Snapshots:** row shaping, pruning parameters, scheduler tick tolerates failures.
 - **Role files:** Dockerfile has the ODBC install and non-root user; compose template renders
-  with defaults; `static/vendor/echarts.min.js` exists and is the pinned version; no
-  `GETDATE()` without the offset parameter anywhere in `queries/`.
-- **CI:** `python -m pytest roles/s1_monitor/tests` added to `ci.yml`; the retired roles'
-  test steps are removed at cutover.
-- **Manual acceptance on the workstation:** run the dev compose against the production
-  database over Tailscale; open a PEPKOR JBH device at 30 days and zoom to a single day; open
-  DCB DUR and confirm its warn line sits at its own baseline, not 90%; open MADIBANA PE and
-  confirm today's outage appears in the availability lane; open Pipeline and confirm the
-  broker client count matches `docker ps` on the host.
+  with defaults; vendored ECharts present and pinned; no `GETDATE()` in `queries/`.
+- **CI:** `python -m pytest roles/s1_monitor/tests` added to `ci.yml`.
+- **Manual acceptance on the workstation** against production over Tailscale: PEPKOR JBH
+  DIM1 at 90d matches the shape of the December 2024 report's Figure 5 style; DCB DUR's warn
+  line sits at 55.8%, not 90%; MADIBANA PE at 7d shows the weekend outage as a red band in
+  the heatmap and in the outages table; comparison of PEPKOR JBH DIM1, DIM3, DIM4 overlays
+  cleanly; a downloaded good-read PNG carries the header and the expected filename.
 
 ## Local development
 
@@ -426,7 +445,5 @@ docker compose -f docker-compose.dev.yml up --build
 # http://localhost:8090
 ```
 
-`.env` is covered by `.gitignore`. The dev compose bind-mounts `../app/static` so page edits
-show on refresh without a rebuild; Python changes rebuild the image. The snapshot task is off
-in dev (`SNAPSHOT_ENABLED=false`); set it true deliberately to test the job against
-production.
+`.env` is added to `.gitignore`. The dev compose bind-mounts `../app/static` so page edits
+show on refresh without a rebuild. The snapshot task is off in dev (`SNAPSHOT_ENABLED=false`).
