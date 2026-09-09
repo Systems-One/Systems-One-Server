@@ -86,3 +86,28 @@ def test_storage_and_app_stopped_and_ordering():
     )
     assert [x["rule"] for x in a] == ["App stopped", "C: drive"]
     assert a[0]["severity"] == "bad" and a[1]["severity"] == "warn" and a[1]["value"] == "85.0%"
+
+
+def test_never_state_with_no_last_seen():
+    a = sv.attention([dev(state="never", last_seen=None)], CFG, [], {}, NOW, S)
+    assert len(a) == 1
+    assert a[0]["rule"] == "No data"
+    assert a[0]["value"] == "silent for ever"
+    assert a[0]["severity"] == "bad"
+    assert a[0]["since"] is None
+
+
+def test_app_stopped_with_no_timestamp():
+    a = sv.attention([dev(application_running=False, stopped_since=None)], CFG, [], {}, NOW, S)
+    assert len(a) == 1
+    assert a[0]["rule"] == "App stopped"
+    assert a[0]["value"] == "since unknown"
+
+
+def test_storage_with_missing_cfg_keys():
+    cfg_partial = {"PEP": {"has_dimension": False}}
+    a = sv.attention([dev(c_usage=95.0)], cfg_partial, [], {}, NOW, S)
+    assert len(a) == 1
+    assert a[0]["rule"] == "C: drive"
+    assert a[0]["severity"] == "bad"
+    assert a[0]["limit"] == "above 90%"

@@ -66,10 +66,12 @@ def attention(devices, cfg_by_customer, threshold_rows, recent_packets_by_device
                     _push(out, sev, d, f"{r['name']} today", f"{v:.1f}%", ("below " if low else "above ") + f"{lim:.1f}%", over=abs(v - lim))
         cu = d.get("c_usage")
         if cu is not None:
-            if cu > cfg["storage_bad_pct"]:
-                _push(out, "bad", d, "C: drive", f"{cu:.1f}%", f"above {cfg['storage_bad_pct']:.0f}%", over=cu - cfg["storage_bad_pct"])
-            elif cu > cfg["storage_warn_pct"]:
-                _push(out, "warn", d, "C: drive", f"{cu:.1f}%", f"above {cfg['storage_warn_pct']:.0f}%", over=cu - cfg["storage_warn_pct"])
+            bad_pct = cfg.get("storage_bad_pct", th.DEFAULT_CFG["storage_bad_pct"])
+            warn_pct = cfg.get("storage_warn_pct", th.DEFAULT_CFG["storage_warn_pct"])
+            if cu > bad_pct:
+                _push(out, "bad", d, "C: drive", f"{cu:.1f}%", f"above {bad_pct:.0f}%", over=cu - bad_pct)
+            elif cu > warn_pct:
+                _push(out, "warn", d, "C: drive", f"{cu:.1f}%", f"above {warn_pct:.0f}%", over=cu - warn_pct)
         if d.get("application_running") is False:
             _push(out, "bad", d, "App stopped", "since " + (d["stopped_since"].strftime("%a %d %b %H:%M") if d.get("stopped_since") else "unknown"),
                   since=d.get("stopped_since"), over=500)
