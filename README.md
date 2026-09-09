@@ -87,7 +87,7 @@ machine in the `production` inventory:
 
 | Play | Group | Roles (in order) |
 |---|---|---|
-| `webservers.yml` | `webservers` | `docker`, `cloudflared`, `grafana`, `mqtt`, `nodered`, `mqtt_ingestor`, `s1_dashboard`, `s1_reporter`, `marketing_display`, `scan_fleet_dashboard` |
+| `webservers.yml` | `webservers` | `docker`, `cloudflared`, `grafana`, `mqtt`, `nodered`, `mqtt_ingestor`, `s1_dashboard`, `s1_reporter`, `marketing_display`, `scan_fleet_dashboard`, `s1_baselines` |
 | `dbservers.yml` | `dbservers` | `docker`, `mssql`, `backup` |
 
 `site.yml` imports both. `staging` is a second inventory with the same group layout
