@@ -212,6 +212,8 @@ async function renderTrends(arg,my){
   main.querySelectorAll('#twin button').forEach(b=>b.onclick=()=>{ TWIN=Number(b.dataset.w); render(); });
 
   if(TSUB==='tiles'){
+    const t0=(()=>{ const d0=new Date(sast(NOW.getTime())); d0.setUTCHours(0,0,0,0); return d0.getTime(); })();
+    const fromMs=t0-(TWIN-1)*DAY;
     for(const d of ds){
       const rows=(d.daily||[]).map(r=>{ const p=r.ts.split('-').map(Number); return {x:Date.UTC(p[0],p[1]-1,p[2]),v:r.value,low:r.low_volume}; });
       const el=document.getElementById('mini'+d.id); if(!el) continue;
@@ -222,9 +224,8 @@ async function renderTrends(arg,my){
       if(tt) tt.textContent=d.customer+(d.average!=null?' · avg '+(isPct?fpct(d.average):num(Math.round(d.average))):'');
       const ml=[]; if(isPct&&d.warn!=null) ml.push(dashed(Number(d.warn),C.warn,'')); if(d.average!=null) ml.push(dashed(Number(d.average),C.ink3,''));
       const ymax=isPct?100:Math.max(1,...rows.map(r=>r.v||0));
-      const xmin=rows.length?rows[0].x-DAY/2:undefined, xmax=rows.length?rows[rows.length-1].x+DAY/2:undefined;
       ch.setOption(Object.assign(base(),{grid:{left:36,right:6,top:10,bottom:20},
-        xAxis:{type:'time',min:xmin,max:xmax,axisLabel:{color:C.ink3,fontSize:10,hideOverlap:true,formatter:v=>{const dd=new Date(v);return dd.getUTCDate()+' '+MON[dd.getUTCMonth()];}},axisLine:{lineStyle:{color:C.line}},axisTick:{show:false},splitLine:{show:false}},
+        xAxis:{type:'time',min:fromMs-DAY/2,max:t0+DAY/2,axisLabel:{color:C.ink3,fontSize:10,hideOverlap:true,formatter:v=>{const dd=new Date(v);return dd.getUTCDate()+' '+MON[dd.getUTCMonth()];}},axisLine:{lineStyle:{color:C.line}},axisTick:{show:false},splitLine:{show:false}},
         yAxis:Object.assign({},AX,{type:'value',min:0,max:ymax,interval:isPct?25:undefined,axisLabel:{color:C.ink3,fontSize:10,formatter:v=>isPct?v:(v>=1000?(v/1000)+'k':v)}}),
         tooltip:Object.assign({trigger:'axis',formatter:ps=>{ const p=ps.find(x=>x.value[1]!=null); if(!p) return ''; const r=rows.find(x=>x.x===p.value[0]); return '<div style="color:'+C.ink2+'">'+fmtS(p.value[0],'day')+'</div><b>'+(isPct?fpct(p.value[1]):num(p.value[1]))+'</b> <span style="color:'+C.ink2+'">'+esc(m.name)+(r&&r.low?' · under '+MIN_ITEMS+' items':'')+'</span>'; }},TIP),
         series:[ isPct
@@ -242,9 +243,10 @@ async function renderTrends(arg,my){
     const body=document.getElementById('wowbody');
     if(body) body.innerHTML=wow.map(w=>{
       const dl=isItems?w.delta_pct:w.delta_abs;
+      const zero=dl!=null&&Math.abs(dl)<0.05;
       const goodDir=dl==null?null:((dl>0)===(m.good==='up'));
       const cls=dl==null||Math.abs(dl)<thresh?'':goodDir?'up':'down';
-      const txt=dl==null?'–':(dl>0?'+':'')+(isItems?dl.toFixed(1)+'%':dl.toFixed(1)+' pts');
+      const txt=dl==null?'–':zero?(isItems?'0%':'0.0 pts'):(dl>0?'+':'')+(isItems?dl.toFixed(0)+'%':dl.toFixed(1)+' pts');
       const last5=w.last5||[]; const vals=last5.filter(v=>v!=null);
       const spmin=isItems?0:(vals.length?Math.max(0,Math.min.apply(null,vals)-5):0), spmax=isItems?undefined:100;
       return '<tr><td>'+esc(w.label)+' <span style="color:var(--ink-3)">'+esc(w.customer)+'</span></td>'
