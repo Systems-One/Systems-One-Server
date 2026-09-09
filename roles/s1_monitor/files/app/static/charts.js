@@ -1,0 +1,1 @@
+/* ECharts builders for the device and trends pages. Filled in by the next tasks. */

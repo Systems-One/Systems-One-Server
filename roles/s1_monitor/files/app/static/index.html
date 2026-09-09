@@ -1,1 +1,33 @@
-<!doctype html><title>S1 Remote Monitoring</title>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S1 Remote Monitoring</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="topbar">
+  <a class="brand" href="#fleet"><span class="mark"></span>S1 Remote Monitoring</a>
+  <nav class="nav">
+    <a href="#fleet" data-nav="fleet">Fleet</a>
+    <a href="#device" data-nav="device">Device</a>
+    <a href="#trends" data-nav="trends">Trends</a>
+  </nav>
+  <div class="spacer"></div>
+  <label class="ctl">Customer <select class="sel" id="custsel"><option value="">All customers</option></select></label>
+  <span class="clock" id="clock"></span>
+  <button class="bell" id="bell" title="Needs attention"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span class="badge" id="badge" hidden></span></button>
+  <div class="attnpanel" id="attnpanel" hidden></div>
+</div>
+<div class="banner" id="banner"></div>
+<main id="main"></main>
+<script src="/static/vendor/echarts.min.js"></script>
+<script src="/static/api.js"></script>
+<script src="/static/charts.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
