@@ -5,6 +5,8 @@ import time
 
 
 class Cache:
+    MAX_ENTRIES = 256   # keys carry ids from the URL; cap the map so it cannot grow without bound
+
     def __init__(self, clock=time.monotonic):
         self._clock = clock
         self._lock = threading.Lock()
@@ -27,6 +29,8 @@ class Cache:
             raise
         with self._lock:
             self._entries[key] = (now, dt.datetime.now(dt.timezone.utc).replace(microsecond=0, tzinfo=None).isoformat() + "Z", payload)
+            while len(self._entries) > self.MAX_ENTRIES:
+                del self._entries[min(self._entries, key=lambda k: self._entries[k][0])]
         return payload
 
 

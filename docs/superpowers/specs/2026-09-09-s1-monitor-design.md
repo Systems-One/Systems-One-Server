@@ -288,7 +288,8 @@ from consecutive rows.
 TTL is `CACHE_TTL_LIVE_SECONDS` for the `24h`/`48h` presets and fleet, and
 `CACHE_TTL_HISTORY_SECONDS` for the daily presets and trends. On a builder exception with a
 cached entry, the entry is returned with `stale: true` and `stale_since`; with no entry the
-endpoint returns 503 `{detail}`. `api.js` shows a persistent banner "Showing data from
+endpoint returns 503 `{ "detail": "<exception class name>" }`. The exception message never
+reaches the response body; it is logged server-side with the traceback. `api.js` shows a persistent banner "Showing data from
 HH:MM, database unreachable" when `stale` is set, and an error panel on 503. Every query
 runs with `QUERY_TIMEOUT_SECONDS`.
 
@@ -299,11 +300,11 @@ All endpoints are `GET`, JSON, no auth. Times are UTC ISO-8601. `device_id` is
 
 | Endpoint | Params | Returns |
 |---|---|---|
-| `/health` | | `{status, db_ok, last_query_utc, snapshot_last_utc}` |
+| `/health` | | `{status, db_ok, last_query_utc, snapshot_last_utc, snapshot_ok, snapshot_error_class}`; the error is reported as a class name or null, never as a message |
 | `/api/meta` | | customers with capabilities and limits, devices list (`id, customer, location, machine_name, serial_number, reporting_enabled, muted_until`), thresholds per device per metric (with `source`), `tz_offset_hours`, the three low-volume thresholds, `history_since` |
-| `/api/fleet` | `customer?` | `strip` (online, offline, stale, never, disabled, items_today, good_read_today_pct, items_30d, good_read_30d_pct, last_db_write_utc, db_write_age_s), `attention[]` (severity, device_id, rule, value, limit, since), `devices[]` (state, last_seen, today items and good_read_pct with low_volume, 30-day items and good_read_pct with low_volume, 24 hourly item counts, c_usage_percent, app_running) |
+| `/api/fleet` | `customer?` | `strip` (online, offline, stale, never, disabled, items_today, good_read_today_pct, items_30d, good_read_30d_pct, last_db_write_utc, db_write_age_s), `attention[]` (severity, device_id, rule, value, limit, since), `devices[]` (state, last_seen, today items and good_read_pct with low_volume, 30-day items and good_read_pct with low_volume, 24 hourly item counts, `c_usage` and `max_usage` as percentages, app_running) |
 | `/api/device/{id}` | | identity, state, last_seen, latest health row, os_version, drives, capabilities, thresholds per metric, `history_since` |
-| `/api/device/{id}/series` | `range` (preset) | `bucket_seconds`, `from`, `to`, `buckets[]` with `ts, nodata, items, good_read, no_read, no_dimension, no_weight, hand_scanned, not_sent, more_than_1_item, low_volume`, `hourly[]` (same shape, daily presets only), `packets_summary` (detail presets: max/min/avg items per packet), `summary` (max/min/avg per the rules above), `totals` (sums over the range), `outages[]` |
+| `/api/device/{id}/series` | `range` (preset) | `bucket_seconds`, `from`, `to`, `buckets[]` with `ts, nodata, items, good_read, no_read, no_dimension, no_weight, hand_scanned, not_sent, more_than_1_item, low_volume`, `hourly[]` (same shape, daily presets only), `summary` (max/min/avg per the rules above; its `per_unit` block holds items per hour on daily presets and items per packet, label `"packet"`, on detail presets), `totals` (sums over the range), `outages[]` |
 | `/api/device/{id}/health` | `range` | history rows thinned to at most 2,000 points plus `events[]` from transitions; empty arrays with `history_since: null` until snapshots exist |
 | `/api/trends` | `metric, range (7d/30d/90d), customer?` | `devices[]` each with `daily[]` (`ts, value, items, low_volume`), `average`, `warn`; `wow[]` rows: device, this_week, prev4_median, delta_abs, delta_pct, last5[] |
 
@@ -338,7 +339,7 @@ and tokens from the current site (`#0f1117` page, `#151a23` panels, Inter), sema
 colours reserved for state: green ok, amber warn, red bad, blue informational, grey
 disabled or low volume. Pages poll every 60 seconds while visible.
 
-### Fleet (`index.html`)
+### Fleet (route `#fleet`)
 
 1. Strip of seven tiles: Online, Offline, Stale, Items today, Good read today, Good read 30
    days, Last DB write (amber over 10 minutes, red over 30).
@@ -351,7 +352,7 @@ disabled or low volume. Pages poll every 60 seconds while visible.
 
 No needs-attention list on the page; it lives in the bell.
 
-### Device (`device.html?id=`)
+### Device (route `#device/<id>/<range>[/cmp=a,b]`)
 
 Header panel in four aligned columns: identity (name, customer, serial, capabilities),
 state (state, last seen, app, uptime), host (drives, CPU, memory, temperature), OS and
@@ -389,7 +390,7 @@ produces a 2x PNG with a header stamped in (device and figure name, customer, li
 compared machines, data timestamp) and a filename
 `S1_<customer>_<location>_<machine>_<figure>_<range>_<yyyymmdd-hhmm>.png`.
 
-### Trends (`trends.html`)
+### Trends (route `#trends[/tiles|/table]`)
 
 Sub-menu with two pages. Controls above both: metric (items, good read %, no dimension %,
 hand scanned %, not sent %) and window (7, 30, 90 days).
@@ -397,7 +398,9 @@ hand scanned %, not sent %) and window (7, 30, 90 days).
 - **Machines**: one tile per device on a shared scale (percentages 0 to 100), one marker per
   day, the device's own warn line, the average stated in the tile title, hollow low-volume
   points, a download button, click through to the device. Devices lacking the capability
-  are omitted with a count note.
+  are omitted with a count note, as are devices with `reporting_enabled = 0`. Percentage tiles
+  share the fixed 0 to 100 scale; items tiles autoscale per device, because device volumes differ
+  by four orders of magnitude and one shared items scale flattens every small machine to nothing.
 - **Week over week**: table of this week (Monday to now) against the median of the previous
   four full weeks, delta, and a five-week sparkline, sorted worst first in the metric's bad
   direction. Items compares to the same point in each previous week.

@@ -19,7 +19,10 @@ def fake_query(sql, params=()):
     if sql is F.SQL_TODAY: return [{"device_id": 3, "items": 500, "good_read": 495, "no_read": 5, "no_dimension": 2, "no_weight": 0, "hand_scanned": 0, "not_sent": 0, "more_than_1_item": 1}]
     if sql is F.SQL_30D: return [{"device_id": 3, "items": 60000, "good_read": 59000, "no_read": 1000, "no_dimension": 0, "no_weight": 0, "hand_scanned": 0, "not_sent": 0, "more_than_1_item": 0}]
     if sql is F.SQL_SPARK24: return [{"device_id": 3, "hour_utc": "2026-09-09T11:00:00Z", "items": 120}]
-    if sql is F.SQL_RECENT_PACKETS: return [{"device_id": 3, "items": 10, "not_sent": 0, "rn": 1}]
+    if sql is F.SQL_RECENT_PACKETS:
+        # the rule reads the last 3 packets only, so the query is bounded to the last hour
+        assert params[0] == NOW - dt.timedelta(hours=1)
+        return [{"device_id": 3, "items": 10, "not_sent": 0, "rn": 1}]
     if sql is F.SQL_LAST_WRITE: return [{"state_value": "2026-09-09T10:59:00+00:00"}]
     raise AssertionError("unexpected sql")
 
@@ -55,4 +58,4 @@ def test_fleet_customer_filter_and_stale_flag(monkeypatch):
     assert r.status_code == 200 and r.json()["stale"] is True
     main.cache._entries.clear()
     r2 = TestClient(main.app).get("/api/fleet")
-    assert r2.status_code == 503
+    assert r2.status_code == 503 and r2.json()["detail"] == "RuntimeError"   # class name only, never the message

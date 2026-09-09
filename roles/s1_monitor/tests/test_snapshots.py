@@ -4,6 +4,18 @@ import snapshots as sn
 def test_migration_sql_is_idempotent_ddl():
     sql = open(os.path.join(os.path.dirname(sn.__file__), "migrations", "001_device_health_history.sql"), encoding="utf-8").read()
     assert "IF OBJECT_ID(N'dbo.device_health_history'" in sql and "CREATE INDEX IX_device_health_history_device_ts" in sql
+    assert "OBJECT_ID(N'dbo.device_health_history')" in sql   # the index guard is qualified to this table
+
+def test_migrate_runs_two_batches_in_order():
+    """GO splits the file: SQL Server will not parse the index batch before the table exists."""
+    calls = []
+    def execute(sql, params=()): calls.append(sql); return 0
+    sn.migrate(execute)
+    assert len(calls) == 2 and all(s.strip() for s in calls)
+    assert "CREATE TABLE dbo.device_health_history" in calls[0] and "CREATE INDEX" not in calls[0]
+    assert "CREATE INDEX IX_device_health_history_device_ts" in calls[1]
+    assert not any("GO" == line.strip() for s in calls for line in s.splitlines())
+
 
 def test_run_once_inserts_and_returns_rowcount():
     calls = []

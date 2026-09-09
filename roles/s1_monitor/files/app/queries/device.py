@@ -39,7 +39,7 @@ def build_device(q, s, now_utc, device_id):
     cfg = qf._cfg_map(q).get(d["customer"], th.DEFAULT_CFG)
     thr = th.all_for_device(q(qf.SQL_THRESHOLDS, ()), cfg, d["customer"], d["machine_name"], d["location"])
     state = av.classify(_dt(d.get("last_seen")), _dt(d.get("created_at")), now_utc, s.offline_gap_minutes, s.stale_days)
-    return {**d, "state": state, "capabilities": _caps(cfg), "storage_limits": {"warn": cfg.get("storage_warn_pct"), "bad": cfg.get("storage_bad_pct")},
+    return {**d, "generated_utc": now_utc.isoformat() + "Z", "state": state, "capabilities": _caps(cfg), "storage_limits": {"warn": cfg.get("storage_warn_pct"), "bad": cfg.get("storage_bad_pct")},
             "thresholds": thr, "drives": q(SQL_DRIVES, (device_id,))}
 
 
@@ -64,7 +64,7 @@ def build_series(q, s, now_utc, device_id, preset_name):
     starts = tw.bucket_starts(frm, end_excl, preset.bucket_seconds)
     min_items = tw.min_items_for(preset, s)
     buckets = rates.fill_buckets(_fetch_buckets(q, s, device_id, preset.bucket_seconds, frm, end_excl), starts, min_items)
-    out = {"range": preset.name, "bucket_seconds": preset.bucket_seconds, "style": preset.style, "from": frm.isoformat() + "Z", "to": end_excl.isoformat() + "Z",
+    out = {"generated_utc": now_utc.isoformat() + "Z", "range": preset.name, "bucket_seconds": preset.bucket_seconds, "style": preset.style, "from": frm.isoformat() + "Z", "to": end_excl.isoformat() + "Z",
            "min_items": min_items, "buckets": buckets}
     if preset.daily:
         hourly = rates.fill_buckets(_fetch_buckets(q, s, device_id, 3600, frm, end_excl), tw.bucket_starts(frm, end_excl, 3600), s.min_items_hour)

@@ -1,11 +1,16 @@
 /* Routing, the needs-attention bell and the Fleet page. Loaded after api.js and charts.js. */
 const main=document.getElementById('main');
-let CUST=''; const charts=[]; function dispose(){ while(charts.length) charts.pop().dispose(); }
+let CUST=''; const charts=[]; function dispose(){ while(charts.length) charts.pop().dispose(); HEAT_CHART=null; }
+const RANGE_KEYS=['24h','48h','7d','30d','90d'];
 let RANGE='90d', COMPARE=[], CMP_OPEN=false, BELL_OPEN=false, ATTENTION=[];
 let METRIC='good_read_pct', TWIN=30, TSUB='tiles';
 /* Every page renderer carries the token of the render that started it and drops out after each
    await if a newer render has begun, so a slow fetch can never paint over a newer route. */
 let RENDER_SEQ=0;
+/* The 60 s poll re-renders in place: scrolling to the top is for a route change only. */
+let LAST_HASH=null;
+/* NOW comes from whichever payload the page just loaded, so the clock never drifts from the data. */
+function setClock(){ const el=document.getElementById('clock'); if(el) el.textContent='Data as of '+fmt(NOW.getTime())+' SAST'; }
 
 async function boot(){
   try{ await API.loadMeta(); }catch(e){ errorPanel(main,e); return; }
@@ -15,6 +20,8 @@ async function boot(){
   sel.onchange=e=>{ CUST=e.target.value; render(); };
   document.getElementById('bell').onclick=e=>{ e.stopPropagation(); BELL_OPEN=!BELL_OPEN; document.getElementById('attnpanel').hidden=!BELL_OPEN; };
   document.addEventListener('click',e=>{ if(BELL_OPEN&&!e.target.closest('#attnpanel')){ BELL_OPEN=false; document.getElementById('attnpanel').hidden=true; } });
+  /* registered once: the device page is re-rendered on every poll, and a per-render listener leaked */
+  document.addEventListener('click',()=>{ if(CMP_OPEN){ CMP_OPEN=false; const m=document.getElementById('cmpmenu'); if(m) m.hidden=true; } });
   window.addEventListener('hashchange',render);
   window.addEventListener('resize',()=>charts.forEach(c=>c.resize()));
   setInterval(()=>{ if(!document.hidden) render(); },60000);
@@ -23,17 +30,19 @@ async function boot(){
 
 async function render(){
   const my=++RENDER_SEQ;
-  dispose(); window.scrollTo(0,0);
-  const [route,arg,arg2,arg3]=(location.hash||'#fleet').slice(1).split('/');
+  const hash=location.hash||'#fleet';
+  dispose();
+  if(hash!==LAST_HASH){ window.scrollTo(0,0); LAST_HASH=hash; }
+  const [route,arg,arg2,arg3]=hash.slice(1).split('/');
   if(route==='device'){
-    if(arg2) RANGE=arg2;
+    if(RANGE_KEYS.includes(arg2)) RANGE=arg2;   // a stray path segment must not become the range
     COMPARE=(arg3&&arg3.startsWith('cmp='))?arg3.slice(4).split(',').map(Number).filter(Boolean):[];
   }
   document.querySelectorAll('[data-nav]').forEach(a=>a.classList.toggle('on',a.dataset.nav===route));
   try{ await ({fleet:renderFleet,device:renderDevice,trends:renderTrends}[route]||renderFleet)(arg,my); }
   catch(e){ if(my!==RENDER_SEQ) return; errorPanel(main,e); }
   if(my!==RENDER_SEQ) return;
-  document.getElementById('clock').textContent='Data as of '+fmt(NOW.getTime())+' SAST';
+  setClock();
   renderBell();
   if(route&&route!=='fleet') refreshAttention();
 }
@@ -43,7 +52,8 @@ async function render(){
 async function refreshAttention(){
   try{
     const F=await API.get('/api/fleet'+(CUST?'?customer='+encodeURIComponent(CUST):''),{banner:false});
-    ATTENTION=F.attention||[]; renderBell();
+    if(F&&F.generated_utc) NOW=new Date(F.generated_utc);
+    ATTENTION=F.attention||[]; renderBell(); setClock();
   }catch(e){ /* the page itself already reports API failures */ }
 }
 function renderBell(){
@@ -69,7 +79,7 @@ function tile(l,v,sev,d,sz){ return '<div class="tile"><div class="l">'+l+'</div
 async function renderFleet(arg,my){
   const F=await API.get('/api/fleet'+(CUST?'?customer='+encodeURIComponent(CUST):''));
   if(my!==RENDER_SEQ) return;
-  NOW=new Date(F.generated_utc); ATTENTION=F.attention||[];
+  NOW=new Date(F.generated_utc); setClock(); ATTENTION=F.attention||[];
   const ds=F.devices||[]; const S=F.strip||{};
   const wAge=S.db_write_age_s==null?null:S.db_write_age_s/60;
   const wSev=wAge==null?'off':wAge>30?'bad':wAge>10?'warn':'good';
@@ -133,6 +143,7 @@ async function renderDevice(arg,my){
   COMPARE=COMPARE.filter(x=>x!==id);
   const S=await API.get('/api/device/'+id+'/series?range='+RANGE);
   if(my!==RENDER_SEQ) return;
+  if(S&&S.generated_utc){ NOW=new Date(S.generated_utc); setClock(); }
   let cmp=[];
   if(COMPARE.length){
     cmp=(await Promise.all(COMPARE.map(async(cid,i)=>{
@@ -152,7 +163,7 @@ async function renderDevice(arg,my){
     +'<span>App</span><b>'+(d.application_running==null?'–':d.application_running?'running':'stopped')+'</b><span>Uptime</span><b>'+uptimeD(d.uptime_seconds)+'</b></div>'
     +'<div class="kv"><span>Drives</span><b>'+(drives.length?esc(drives.map(x=>x.drive+' '+numOr(x.usage_percent,'%')).join(', ')):'–')+'</b>'
     +'<span>CPU</span><b>'+numOr(d.cpu_percent,'%')+'</b><span>Memory</span><b>'+numOr(d.mem_usage_pct,'%')+'</b><span>Temperature</span><b>'+(d.temp_celsius==null?'–':numOr(d.temp_celsius)+' °C')+'</b></div>'
-    +'<div class="kv"><span>OS</span><b>'+esc(d.os_version||'–')+'</b><span>Host history</span><b class="faint">starts when snapshots begin</b></div></div>';
+    +'<div class="kv"><span>OS</span><b>'+esc(d.os_version||'–')+'</b><span>Host history</span><b class="faint" id="hhist">starts when snapshots begin</b></div></div>';
   const cmpDevs=devices.filter(x=>x.id!==id);
   h+='<div class="toolrow"><select class="sel" id="devsel">'+opts+'</select>'
     +'<span class="seg" id="rng">'+['7d','30d','90d'].map(r=>'<button class="'+(r===RANGE?'on':'')+'" data-r="'+r+'">'+r+'</button>').join('')+'</span>'
@@ -171,7 +182,6 @@ async function renderDevice(arg,my){
   document.getElementById('cmpmenu').onclick=e=>e.stopPropagation();
   main.querySelectorAll('#cmpmenu input').forEach(cb=>cb.onchange=()=>{ const v=Number(cb.dataset.id); if(cb.checked){ if(!COMPARE.includes(v)) COMPARE.push(v); } else COMPARE=COMPARE.filter(x=>x!==v); goDevice(id); });
   main.querySelectorAll('.chip button').forEach(b=>b.onclick=()=>{ COMPARE=COMPARE.filter(x=>x!==Number(b.dataset.rm)); goDevice(id); });
-  document.addEventListener('click',()=>{ if(CMP_OPEN){ CMP_OPEN=false; const m=document.getElementById('cmpmenu'); if(m) m.hidden=true; } },{once:true});
 
   const body=document.getElementById('devbody');
   drawFigures(d,S,cmp,body);
@@ -186,6 +196,8 @@ async function renderDevice(arg,my){
     return;
   }
   if(my!==RENDER_SEQ) return;
+  const hh=document.getElementById('hhist');
+  if(hh&&H.history_since) hh.textContent='since '+fmt(t(H.history_since),'day');
   const slot=document.getElementById('devhost');
   if(slot) drawHost(d,H,slot);
 }
@@ -198,6 +210,7 @@ async function renderTrends(arg,my){
   const m=TM[METRIC]||TM.good_read_pct;
   const R=await API.get('/api/trends?metric='+METRIC+'&range='+TWIN+'d'+(CUST?'&customer='+encodeURIComponent(CUST):''));
   if(my!==RENDER_SEQ) return;
+  if(R&&R.generated_utc){ NOW=new Date(R.generated_utc); setClock(); }
   const ds=R.devices||[], wow=R.wow||[]; const isPct=METRIC!=='items';
   let h='<h1>Trends</h1><p class="sub">'+(TSUB==='tiles'?'Every device on the same scale so drift stands out. One point per day, each panel with its own average and warn line.':'This week so far against the median of the previous four full weeks, worst change first.')+'</p>'
     +'<div class="subnav"><a class="'+(TSUB==='tiles'?'on':'')+'" data-sub="tiles">Machines</a><a class="'+(TSUB==='table'?'on':'')+'" data-sub="table">Week over week</a></div>';

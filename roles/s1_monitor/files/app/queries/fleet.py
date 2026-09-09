@@ -32,7 +32,7 @@ FROM dbo.device_statistics WHERE ts_datetime >= ?
 GROUP BY device_id, DATEADD(HOUR, DATEDIFF(HOUR, 0, ts_datetime), 0)"""
 SQL_RECENT_PACKETS = """SELECT device_id, items, not_sent, rn FROM (
   SELECT device_id, total_items AS items, not_sent, ROW_NUMBER() OVER (PARTITION BY device_id ORDER BY ts_datetime DESC) AS rn
-  FROM dbo.device_statistics) x WHERE rn <= 3"""
+  FROM dbo.device_statistics WHERE ts_datetime >= ?) x WHERE rn <= 3"""
 SQL_CONFIG = "SELECT * FROM dbo.customer_config"
 SQL_THRESHOLDS = """SELECT customer, machine_name, location, metric, direction, warn_value, bad_value, baseline_mean, baseline_stddev,
        baseline_p10, baseline_p90, baseline_samples FROM dbo.alert_thresholds"""
@@ -83,7 +83,7 @@ def build_fleet(q, s, now_utc, customer=None):
     today = q(SQL_TODAY, (midnight,))
     d30 = q(SQL_30D, (midnight - dt.timedelta(days=29),))
     spark = q(SQL_SPARK24, (now_utc - dt.timedelta(hours=24),))
-    packets = q(SQL_RECENT_PACKETS, ())
+    packets = q(SQL_RECENT_PACKETS, (now_utc - dt.timedelta(hours=1),))
     lw = q(SQL_LAST_WRITE, ())
     last_write = _dt(lw[0]["state_value"]) if lw else None
     hour_now = now_utc.replace(minute=0, second=0, microsecond=0)

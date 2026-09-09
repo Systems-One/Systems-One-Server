@@ -63,8 +63,10 @@ def test_series_bad_range():
 def test_device_and_series_503_on_cold_cache_db_down():
     def boom(sql, params=()): raise RuntimeError("down")
     main.QUERY = boom
-    assert TestClient(main.app).get("/api/device/3013").status_code == 503
-    assert TestClient(main.app).get("/api/device/3013/series?range=7d").status_code == 503
+    r = TestClient(main.app).get("/api/device/3013")
+    assert r.status_code == 503 and r.json()["detail"] == "RuntimeError"   # class name only, never the message
+    r = TestClient(main.app).get("/api/device/3013/series?range=7d")
+    assert r.status_code == 503 and r.json()["detail"] == "RuntimeError"
 
 def test_device_stale_on_db_down_after_warm(monkeypatch):
     c = TestClient(main.app)

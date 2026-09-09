@@ -1,6 +1,7 @@
 """s1_monitor API and static site."""
 import asyncio
 import datetime as dt
+import logging
 import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -18,12 +19,15 @@ QUERY: Callable[[str, tuple], list] = db.query
 EXECUTE: Callable[[str, tuple], int] = db.execute
 PROBE: Callable[[], bool] = db.probe
 
+log = logging.getLogger("s1_monitor")
+
 
 @dataclass
 class State:
     last_query_utc: Optional[dt.datetime] = None
     snapshot_last_utc: Optional[dt.datetime] = None
-    snapshot_error: Optional[str] = None
+    snapshot_error: Optional[str] = None          # full text, kept for logs only
+    snapshot_error_class: Optional[str] = None    # exception class name, safe to publish
 
 
 state = State()
@@ -53,7 +57,7 @@ def run_query(sql: str, params: tuple = ()) -> list:
 
 
 async def in_thread(fn, *args):
-    return await asyncio.get_event_loop().run_in_executor(None, fn, *args)
+    return await asyncio.get_running_loop().run_in_executor(None, fn, *args)
 
 
 @asynccontextmanager
@@ -64,6 +68,8 @@ async def lifespan(app: FastAPI):
             await in_thread(snapshots.migrate, EXECUTE)
         except Exception as exc:
             state.snapshot_error = f"migrate: {type(exc).__name__}: {exc}"
+            state.snapshot_error_class = type(exc).__name__
+            log.exception("snapshot migration failed")
         task = asyncio.create_task(snapshots.loop(EXECUTE, settings, state))
     yield
     if task:
@@ -80,7 +86,8 @@ async def health():
     body = {"status": "ok" if ok else "degraded", "db_ok": ok,
             "last_query_utc": state.last_query_utc.isoformat() + "Z" if state.last_query_utc else None,
             "snapshot_last_utc": state.snapshot_last_utc.isoformat() + "Z" if state.snapshot_last_utc else None,
-            "snapshot_error": state.snapshot_error}
+            "snapshot_ok": state.snapshot_error_class is None,
+            "snapshot_error_class": state.snapshot_error_class}
     return JSONResponse(body, status_code=200 if ok else 503)
 
 
@@ -88,7 +95,8 @@ def _cached(key, ttl, builder):
     try:
         return JSONResponse(cache.get_or_build(key, ttl, builder))
     except Exception as exc:   # cold cache and the database is down
-        raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}")
+        log.exception("build failed for %s", key)
+        raise HTTPException(status_code=503, detail=type(exc).__name__)
 
 
 @app.get("/api/meta")
@@ -108,7 +116,8 @@ async def api_device(device_id: int):
         payload = await in_thread(lambda: cache.get_or_build(f"device|{device_id}", settings.cache_ttl_live,
                                                               lambda: qdevice.build_device(run_query, settings, current_time(), device_id)))
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}")
+        log.exception("build failed for device %s", device_id)
+        raise HTTPException(status_code=503, detail=type(exc).__name__)
     if payload is None:
         raise HTTPException(status_code=404, detail="unknown device")
     return JSONResponse(payload)
@@ -123,7 +132,8 @@ async def api_device_series(device_id: int, range: str = "90d"):
         payload = await in_thread(lambda: cache.get_or_build(f"series|{device_id}|{range}", ttl,
                                                               lambda: qdevice.build_series(run_query, settings, current_time(), device_id, range)))
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}")
+        log.exception("build failed for device %s series %s", device_id, range)
+        raise HTTPException(status_code=503, detail=type(exc).__name__)
     if payload is None:
         raise HTTPException(status_code=404, detail="unknown device")
     return JSONResponse(payload)

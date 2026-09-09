@@ -1,3 +1,5 @@
+-- dbo.device_health_history: 15-minute host health snapshots written by s1_monitor.
+-- Batched with GO: SQL Server needs CREATE TABLE committed before the index batch parses.
 IF OBJECT_ID(N'dbo.device_health_history', N'U') IS NULL
 BEGIN
 CREATE TABLE dbo.device_health_history (
@@ -18,8 +20,11 @@ CREATE TABLE dbo.device_health_history (
     last_stats_utc      DATETIME2(0) NULL
 );
 END
-IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_device_health_history_device_ts')
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_device_health_history_device_ts' AND object_id = OBJECT_ID(N'dbo.device_health_history'))
 BEGIN
 CREATE INDEX IX_device_health_history_device_ts
     ON dbo.device_health_history (device_id, snapshot_utc);
 END
+GO

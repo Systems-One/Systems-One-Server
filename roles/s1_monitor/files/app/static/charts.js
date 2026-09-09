@@ -131,7 +131,8 @@ function drawHeat(d,S,host){
   const m=metrics.find(x=>x.k===HEAT_METRIC); const isPct=HEAT_METRIC!=='items';
   const sel=(host||document).querySelector('#heatsel');
   if(sel){ sel.innerHTML=metrics.map(x=>'<option value="'+x.k+'"'+(x.k===HEAT_METRIC?' selected':'')+'>'+x.name+'</option>').join('');
-    sel.onchange=()=>{ HEAT_METRIC=sel.value; if(HEAT_CHART){ HEAT_CHART.dispose(); const i=charts.indexOf(HEAT_CHART); if(i>=0) charts.splice(i,1); }
+    sel.onchange=()=>{ HEAT_METRIC=sel.value;
+      if(HEAT_CHART){ if(!HEAT_CHART.isDisposed()) HEAT_CHART.dispose(); const i=charts.indexOf(HEAT_CHART); if(i>=0) charts.splice(i,1); HEAT_CHART=null; }
       const btn=(host||document).querySelector('#figHeatBox .dl'); if(btn) btn.remove(); drawHeat(d,S,host); }; }
   const dates=(S.buckets||[]).map(b=>sast(t(b.ts)));
   const hourMap=new Map((S.hourly||[]).map(r=>[sast(t(r.ts)),r]));

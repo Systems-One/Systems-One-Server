@@ -3,6 +3,7 @@ import asyncio
 import datetime as dt
 import logging
 import os
+import re
 
 log = logging.getLogger("s1_monitor.snapshots")
 MIGRATION = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations", "001_device_health_history.sql")
@@ -25,7 +26,7 @@ SQL_PRUNE = "DELETE FROM dbo.device_health_history WHERE snapshot_utc < ?"
 
 def migrate(execute):
     sql = open(MIGRATION, encoding="utf-8").read()
-    for stmt in [s.strip() for s in sql.split("\nGO") if s.strip()]:
+    for stmt in [s.strip() for s in re.split(r"^\s*GO\s*$", sql, flags=re.M | re.I) if s.strip()]:
         execute(stmt, ())
 
 
@@ -44,12 +45,14 @@ async def loop(execute, s, state, sleep=asyncio.sleep, clock=None):
     while True:
         now = clock()
         try:
-            await asyncio.get_event_loop().run_in_executor(None, run_once, execute, now)
+            await asyncio.get_running_loop().run_in_executor(None, run_once, execute, now)
             state.snapshot_last_utc, state.snapshot_error = now, None
+            state.snapshot_error_class = None
             if last_prune is None or (now - last_prune) >= dt.timedelta(days=1):
-                await asyncio.get_event_loop().run_in_executor(None, prune, execute, now, s.snapshot_retention_days)
+                await asyncio.get_running_loop().run_in_executor(None, prune, execute, now, s.snapshot_retention_days)
                 last_prune = now
         except Exception as exc:
             state.snapshot_error = f"{type(exc).__name__}: {exc}"
+            state.snapshot_error_class = type(exc).__name__
             log.exception("snapshot failed")
         await sleep(s.snapshot_interval_minutes * 60)

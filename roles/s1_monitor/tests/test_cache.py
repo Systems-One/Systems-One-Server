@@ -33,3 +33,14 @@ def test_stale_on_error_guards_non_dict_payloads():
     def boom(): raise RuntimeError("builder failed")
     r = cc.get_or_build("n", 1, boom)
     assert r is None
+
+
+def test_entries_are_capped_and_the_oldest_is_evicted():
+    t = [0.0]
+    cc = c.Cache(clock=lambda: t[0])
+    for i in range(c.Cache.MAX_ENTRIES + 20):
+        t[0] += 1
+        cc.get_or_build("k%d" % i, 1, lambda i=i: {"i": i})
+    assert len(cc._entries) == c.Cache.MAX_ENTRIES
+    assert "k0" not in cc._entries and "k19" not in cc._entries
+    assert "k20" in cc._entries and "k%d" % (c.Cache.MAX_ENTRIES + 19) in cc._entries

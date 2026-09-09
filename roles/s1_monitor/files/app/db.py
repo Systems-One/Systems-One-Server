@@ -1,6 +1,7 @@
 """Thin pyodbc layer. Everything above this module works with lists of dicts."""
 import datetime
 import decimal
+from contextlib import closing
 from typing import Any
 
 import pyodbc
@@ -19,7 +20,7 @@ def _coerce(v: Any) -> Any:
 
 
 def query(sql: str, params: tuple = ()) -> list[dict]:
-    with pyodbc.connect(settings.conn_str, timeout=settings.query_timeout) as conn:
+    with closing(pyodbc.connect(settings.conn_str, timeout=settings.query_timeout)) as conn:
         conn.timeout = settings.query_timeout
         cur = conn.cursor()
         cur.execute(sql, params) if params else cur.execute(sql)
@@ -28,7 +29,7 @@ def query(sql: str, params: tuple = ()) -> list[dict]:
 
 
 def execute(sql: str, params: tuple = ()) -> int:
-    with pyodbc.connect(settings.conn_str, timeout=settings.query_timeout, autocommit=True) as conn:
+    with closing(pyodbc.connect(settings.conn_str, timeout=settings.query_timeout, autocommit=True)) as conn:
         conn.timeout = settings.query_timeout
         cur = conn.cursor()
         cur.execute(sql, params) if params else cur.execute(sql)
