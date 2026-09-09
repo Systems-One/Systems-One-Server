@@ -33,6 +33,8 @@ from cache import cache
 from queries import fleet as qfleet
 from queries import device as qdevice
 from queries import trends as qtrends
+from queries import health as qhealth
+import snapshots
 NOW_OVERRIDE = None   # tests set a fixed time
 
 
@@ -56,7 +58,16 @@ async def in_thread(fn, *args):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    task = None
+    if settings.snapshot_enabled:
+        try:
+            await in_thread(snapshots.migrate, EXECUTE)
+        except Exception as exc:
+            state.snapshot_error = f"migrate: {type(exc).__name__}: {exc}"
+        task = asyncio.create_task(snapshots.loop(EXECUTE, settings, state))
     yield
+    if task:
+        task.cancel()
 
 
 app = FastAPI(title="S1 Remote Monitoring", lifespan=lifespan)
@@ -124,6 +135,14 @@ async def api_trends(metric: str = "good_read_pct", range: str = "30d", customer
         raise HTTPException(status_code=400, detail="bad metric or range")
     return await in_thread(_cached, f"trends|{metric}|{range}|{customer}", settings.cache_ttl_history,
                            lambda: qtrends.build_trends(run_query, settings, current_time(), metric, range, customer or None))
+
+
+@app.get("/api/device/{device_id}/health")
+async def api_device_health(device_id: int, range: str = "30d"):
+    if range not in ("24h", "48h", "7d", "30d", "90d"):
+        raise HTTPException(status_code=400, detail="unknown range")
+    return await in_thread(_cached, f"health|{device_id}|{range}", settings.cache_ttl_live,
+                           lambda: qhealth.build_health(run_query, settings, current_time(), device_id, range))
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
