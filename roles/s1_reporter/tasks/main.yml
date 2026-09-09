@@ -7,78 +7,109 @@
     group: root
     mode: "0755"
 
-- name: Copy Dockerfile
-  copy:
-    src: Dockerfile
-    dest: "{{ s1_reporter_dir }}/Dockerfile"
-    owner: root
-    group: root
-    mode: "0644"
+- name: Validate required variables
+  assert:
+    that:
+      - vault_s1_reporter_teams_webhook_url is defined
+      - vault_s1_reporter_teams_webhook_url | length > 0
+      - s1_reporter_db_pass | length > 0
+    fail_msg: "s1_reporter needs vault_s1_reporter_teams_webhook_url and a non-empty DB password"
 
-- name: Copy report.py
-  copy:
-    src: report.py
-    dest: "{{ s1_reporter_dir }}/report.py"
-    owner: root
-    group: root
-    mode: "0644"
-
-- name: Copy upload_monitor.py
-  copy:
-    src: upload_monitor.py
-    dest: "{{ s1_reporter_dir }}/upload_monitor.py"
-    owner: root
-    group: root
-    mode: "0644"
-
-- name: Copy teams_notifier.py
-  copy:
-    src: teams_notifier.py
-    dest: "{{ s1_reporter_dir }}/teams_notifier.py"
-    owner: root
-    group: root
-    mode: "0644"
-
-- name: Copy cards.py
-  copy:
-    src: cards.py
-    dest: "{{ s1_reporter_dir }}/cards.py"
-    owner: root
-    group: root
-    mode: "0644"
-
-- name: Copy chart_store.py
-  copy:
-    src: chart_store.py
-    dest: "{{ s1_reporter_dir }}/chart_store.py"
-    owner: root
-    group: root
-    mode: "0644"
-
-- name: Copy entrypoint.sh
-  copy:
-    src: entrypoint.sh
-    dest: "{{ s1_reporter_dir }}/entrypoint.sh"
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: Remove legacy .env file (host_vars/vault are source of truth)
+- name: Remove legacy files from the loop-based reporter
   file:
-    path: "{{ s1_reporter_dir }}/.env"
+    path: "{{ s1_reporter_dir }}/{{ item }}"
     state: absent
+  loop:
+    - report.py
+    - upload_monitor.py
+    - entrypoint.sh
+    - teams_notifier.py
+    - cards.py
+    - chart_store.py
+    - compute_baselines.py
+    - .env
 
-- name: Render s1_reporter docker-compose
+- name: Copy application source
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ s1_reporter_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: Dockerfile,       dest: Dockerfile }
+    - { src: requirements.txt, dest: requirements.txt }
+    - { src: app/,             dest: app/ }
+
+- name: Render docker-compose file
   template:
     src: docker-compose.s1_reporter.yml.j2
     dest: "{{ s1_reporter_dir }}/docker-compose.yml"
     owner: root
     group: root
-    mode: "0644"
+    mode: "0640"
 
-- name: Build and start s1_reporter container
-  command: docker compose up -d --build
+- name: Render run-reporter.sh wrapper
+  template:
+    src: run-reporter.sh.j2
+    dest: "{{ s1_reporter_dir }}/run-reporter.sh"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Stop legacy long-running reporter container if present
+  command: docker rm -f s1_reporter
+  register: s1_reporter_legacy_rm
+  failed_when: false
+  changed_when: "'s1_reporter' in s1_reporter_legacy_rm.stdout"
+
+- name: Build s1_reporter image
+  command: docker compose build reporter
   args:
     chdir: "{{ s1_reporter_dir }}"
-  register: s1_reporter_up
-  changed_when: "'Started' in s1_reporter_up.stdout or 'Recreated' in s1_reporter_up.stdout"
+  changed_when: false
+
+- name: Start chart server
+  command: docker compose up -d --remove-orphans s1-charts
+  args:
+    chdir: "{{ s1_reporter_dir }}"
+  changed_when: false
+
+- name: Resolve compose volume names for the data and chart volumes
+  shell: docker volume ls -q --filter name=s1_reporter_data; docker volume ls -q --filter name=s1_reporter_charts
+  register: s1_reporter_volumes
+  changed_when: false
+
+- name: Make the data volume writable by the non-root reporter user
+  command: >
+    docker run --rm
+    -v {{ s1_reporter_volumes.stdout_lines[0] }}:/data
+    -v {{ s1_reporter_volumes.stdout_lines[1] }}:/data/charts
+    alpine:3 chown -R 10001:10001 /data
+  when: s1_reporter_volumes.stdout_lines | length == 2
+  changed_when: false
+
+- name: Run migrations (customer_config, device flags)
+  command: docker compose run --rm reporter migrate
+  args:
+    chdir: "{{ s1_reporter_dir }}"
+  changed_when: false
+
+- name: Install reporter cron jobs
+  cron:
+    name: "systems-one reporter {{ item.job }}"
+    user: root
+    minute: "{{ item.spec.minute }}"
+    hour: "{{ item.spec.hour }}"
+    day: "{{ item.spec.day }}"
+    weekday: "{{ item.spec.weekday }}"
+    job: "{{ s1_reporter_dir }}/run-reporter.sh {{ item.job }} >> {{ s1_reporter_log_path }} 2>&1"
+    state: present
+  loop:
+    - { job: sync-status,  spec: "{{ s1_reporter_cron_sync_status }}" }
+    - { job: check-alerts, spec: "{{ s1_reporter_cron_check_alerts }}" }
+    - { job: daily,        spec: "{{ s1_reporter_cron_daily }}" }
+    - { job: monthly,      spec: "{{ s1_reporter_cron_monthly }}" }
+    - { job: stale-digest, spec: "{{ s1_reporter_cron_stale_digest }}" }
+  loop_control:
+    label: "{{ item.job }}"
