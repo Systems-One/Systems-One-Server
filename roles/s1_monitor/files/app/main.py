@@ -29,6 +29,14 @@ class State:
 state = State()
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
+from cache import cache
+from queries import fleet as qfleet
+NOW_OVERRIDE = None   # tests set a fixed time
+
+
+def current_time():
+    return NOW_OVERRIDE or now_utc()
+
 
 def now_utc() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None, microsecond=0)
@@ -61,6 +69,30 @@ async def health():
             "snapshot_last_utc": state.snapshot_last_utc.isoformat() + "Z" if state.snapshot_last_utc else None,
             "snapshot_error": state.snapshot_error}
     return JSONResponse(body, status_code=200 if ok else 503)
+
+
+def _cached(key, ttl, builder):
+    try:
+        return JSONResponse(cache.get_or_build(key, ttl, builder))
+    except Exception as exc:   # cold cache and the database is down
+        raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}")
+
+
+@app.get("/api/meta")
+async def api_meta():
+    return await in_thread(_cached, "meta", settings.cache_ttl_history, lambda: qfleet.build_meta(run_query, settings, current_time()))
+
+
+@app.get("/api/fleet")
+async def api_fleet(customer: str = ""):
+    key = f"fleet|{customer}"
+    try:
+        return await in_thread(_cached, key, settings.cache_ttl_live, lambda: qfleet.build_fleet(run_query, settings, current_time(), customer or None))
+    except HTTPException:
+        # No cached payload has ever existed for this exact customer filter and the database is down.
+        # Degrade the live tile instead of erroring the whole dashboard.
+        return JSONResponse({"generated_utc": current_time().isoformat() + "Z",
+                              "strip": {}, "attention": [], "devices": [], "stale": True})
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
