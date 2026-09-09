@@ -1,0 +1,24 @@
+s1_monitor_image: "s1-monitor:latest"
+s1_monitor_dir: "/opt/s1-monitor"
+s1_monitor_port: 8090
+# Bind to loopback: exposed publicly via the Cloudflare tunnel only
+s1_monitor_bind_address: "127.0.0.1"
+
+s1_monitor_db_host: "mssql"
+s1_monitor_db_port: 1433
+s1_monitor_db_name: "S1_Remote_Monitoring"
+s1_monitor_db_user: "{{ mssql_rm_admin_login | default('admin') }}"
+s1_monitor_db_pass: "{{ mssql_rm_admin_password | default('') }}"
+
+s1_monitor_tz_offset_hours: 2
+s1_monitor_min_items_day: 100
+s1_monitor_min_items_hour: 30
+s1_monitor_min_items_half_hour: 15
+s1_monitor_offline_gap_minutes: 11
+s1_monitor_stale_days: 14
+s1_monitor_snapshot_enabled: true
+s1_monitor_snapshot_interval_minutes: 15
+s1_monitor_snapshot_retention_days: 400
+s1_monitor_cache_ttl_live: 30
+s1_monitor_cache_ttl_history: 300
+s1_monitor_query_timeout: 20

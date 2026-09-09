@@ -1,0 +1,14 @@
+services:
+  s1-monitor:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: s1-monitor:dev
+    container_name: s1_monitor_dev
+    env_file: .env
+    environment:
+      SNAPSHOT_ENABLED: "false"
+    ports:
+      - "127.0.0.1:8090:8000"
+    volumes:
+      - ../app/static:/app/static:ro
