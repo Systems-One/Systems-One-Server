@@ -1,14 +1,10 @@
 import json
-import os
-import sys
 import unittest
 import urllib.error
 from unittest.mock import patch
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "files"))
-
-import teams_notifier  # noqa: E402
+import _bootstrap  # noqa: F401
+from s1_reporter import teams as teams_notifier
 
 
 class FakeResponse:
@@ -24,7 +20,7 @@ class FakeResponse:
 
 class TestPostToTeams(unittest.TestCase):
     def test_success_on_first_attempt(self):
-        with patch("teams_notifier.urllib.request.urlopen", return_value=FakeResponse(202)) as mock_open:
+        with patch("s1_reporter.teams.urllib.request.urlopen", return_value=FakeResponse(202)) as mock_open:
             ok = teams_notifier.post_to_teams("https://example.invalid/webhook", {"type": "AdaptiveCard"})
         self.assertTrue(ok)
         mock_open.assert_called_once()
@@ -37,7 +33,7 @@ class TestPostToTeams(unittest.TestCase):
             captured["headers"] = req.headers
             return FakeResponse(202)
 
-        with patch("teams_notifier.urllib.request.urlopen", side_effect=fake_urlopen):
+        with patch("s1_reporter.teams.urllib.request.urlopen", side_effect=fake_urlopen):
             teams_notifier.post_to_teams("https://example.invalid/webhook", {"type": "AdaptiveCard", "version": "1.4"})
 
         self.assertEqual(captured["body"]["type"], "message")
@@ -55,8 +51,8 @@ class TestPostToTeams(unittest.TestCase):
                 raise urllib.error.URLError("boom")
             return FakeResponse(202)
 
-        with patch("teams_notifier.urllib.request.urlopen", side_effect=flaky_urlopen), \
-             patch("teams_notifier.time.sleep") as mock_sleep:
+        with patch("s1_reporter.teams.urllib.request.urlopen", side_effect=flaky_urlopen), \
+             patch("s1_reporter.teams.time.sleep") as mock_sleep:
             ok = teams_notifier.post_to_teams("https://example.invalid/webhook", {"type": "AdaptiveCard"}, max_retries=3, backoff_seconds=1)
 
         self.assertTrue(ok)
@@ -64,8 +60,8 @@ class TestPostToTeams(unittest.TestCase):
         self.assertEqual(mock_sleep.call_count, 2)
 
     def test_gives_up_after_max_retries(self):
-        with patch("teams_notifier.urllib.request.urlopen", side_effect=urllib.error.URLError("boom")) as mock_open, \
-             patch("teams_notifier.time.sleep"):
+        with patch("s1_reporter.teams.urllib.request.urlopen", side_effect=urllib.error.URLError("boom")) as mock_open, \
+             patch("s1_reporter.teams.time.sleep"):
             ok = teams_notifier.post_to_teams("https://example.invalid/webhook", {"type": "AdaptiveCard"}, max_retries=3, backoff_seconds=0)
 
         self.assertFalse(ok)
@@ -74,14 +70,14 @@ class TestPostToTeams(unittest.TestCase):
     def test_bare_oserror_does_not_escape(self):
         """CPython can raise TimeoutError/OSError from getresponse() without wrapping
         it in URLError; post_to_teams documents that it never raises."""
-        with patch("teams_notifier.urllib.request.urlopen", side_effect=TimeoutError("timed out")), \
-             patch("teams_notifier.time.sleep"):
+        with patch("s1_reporter.teams.urllib.request.urlopen", side_effect=TimeoutError("timed out")), \
+             patch("s1_reporter.teams.time.sleep"):
             ok = teams_notifier.post_to_teams("https://example.invalid/webhook", {"type": "AdaptiveCard"}, max_retries=2, backoff_seconds=0)
         self.assertFalse(ok)
 
     def test_non_2xx_status_is_treated_as_failure_and_retried(self):
-        with patch("teams_notifier.urllib.request.urlopen", return_value=FakeResponse(400)), \
-             patch("teams_notifier.time.sleep"):
+        with patch("s1_reporter.teams.urllib.request.urlopen", return_value=FakeResponse(400)), \
+             patch("s1_reporter.teams.time.sleep"):
             ok = teams_notifier.post_to_teams("https://example.invalid/webhook", {"type": "AdaptiveCard"}, max_retries=2, backoff_seconds=0)
 
         self.assertFalse(ok)

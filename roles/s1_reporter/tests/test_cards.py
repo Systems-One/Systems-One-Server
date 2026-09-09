@@ -1,11 +1,8 @@
-import os
-import sys
 import unittest
+from datetime import datetime
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "files"))
-
-import cards  # noqa: E402
+import _bootstrap  # noqa: F401
+from s1_reporter import cards
 
 
 class TestBuildCard(unittest.TestCase):
@@ -126,6 +123,20 @@ class TestCustomerSectionCard(unittest.TestCase):
         blob = str(card)
         self.assertIn("5,000", blob)
         self.assertIn("96.5", blob)
+
+
+class TestStaleDigestCard(unittest.TestCase):
+    def test_lists_devices_with_days_silent(self):
+        card = cards.build_stale_digest_card([
+            {"machine_name": "STATIC1", "location": "DUR", "customer": "PEP AFRICA",
+             "last_seen": datetime(2026, 7, 8, 7, 30), "days_silent": 63},
+        ])
+        text = str(card)
+        self.assertIn("1 Stale Device", text)
+        self.assertIn("STATIC1", text)
+        self.assertIn("63 days", text)
+        self.assertIn("2026-07-08", text)
+        self.assertIn("reporting_enabled", text)
 
 
 if __name__ == "__main__":

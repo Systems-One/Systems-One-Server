@@ -127,3 +127,17 @@ def build_customer_section_card(customer, days, anomalies, today_table, week_tab
         body.extend(build_table(storage_table["headers"], storage_table["rows"]))
 
     return build_card(body)
+
+
+def build_stale_digest_card(stale_devices):
+    count = len(stale_devices)
+    body = [_header(f"🕸️ S1 — {count} Stale Device{'s' if count != 1 else ''} (no data for 14+ days)", "warning")]
+    rows = [
+        [d["machine_name"], d["location"], d["customer"],
+         f"{d['last_seen']:%Y-%m-%d}", f"{d['days_silent']} days"]
+        for d in stale_devices
+    ]
+    body.extend(build_table(["Device", "Location", "Customer", "Last Seen", "Silent For"], rows))
+    body.append(_text("These devices are excluded from alerts and daily reports. "
+                      "Set devices.reporting_enabled = 0 to retire one permanently."))
+    return build_card(body)
