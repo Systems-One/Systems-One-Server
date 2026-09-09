@@ -1,3 +1,4 @@
+import dataclasses
 import datetime as dt
 import main
 from fastapi.testclient import TestClient
@@ -58,3 +59,18 @@ def test_series_detail_24h_uses_half_hour_and_packets():
 
 def test_series_bad_range():
     assert TestClient(main.app).get("/api/device/3013/series?range=5y").status_code == 400
+
+def test_device_and_series_503_on_cold_cache_db_down():
+    def boom(sql, params=()): raise RuntimeError("down")
+    main.QUERY = boom
+    assert TestClient(main.app).get("/api/device/3013").status_code == 503
+    assert TestClient(main.app).get("/api/device/3013/series?range=7d").status_code == 503
+
+def test_device_stale_on_db_down_after_warm(monkeypatch):
+    c = TestClient(main.app)
+    assert c.get("/api/device/3013").status_code == 200
+    monkeypatch.setattr(main, "settings", dataclasses.replace(main.settings, cache_ttl_live=0))
+    def boom(sql, params=()): raise RuntimeError("down")
+    main.QUERY = boom
+    r = c.get("/api/device/3013")
+    assert r.status_code == 200 and r.json()["stale"] is True

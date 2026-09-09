@@ -92,8 +92,11 @@ async def api_fleet(customer: str = ""):
 
 @app.get("/api/device/{device_id}")
 async def api_device(device_id: int):
-    payload = await in_thread(lambda: cache.get_or_build(f"device|{device_id}", settings.cache_ttl_live,
-                                                          lambda: qdevice.build_device(run_query, settings, current_time(), device_id)))
+    try:
+        payload = await in_thread(lambda: cache.get_or_build(f"device|{device_id}", settings.cache_ttl_live,
+                                                              lambda: qdevice.build_device(run_query, settings, current_time(), device_id)))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"{type(exc).__name__}: {exc}")
     if payload is None:
         raise HTTPException(status_code=404, detail="unknown device")
     return JSONResponse(payload)
