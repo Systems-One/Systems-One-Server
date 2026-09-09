@@ -1,0 +1,24 @@
+# One-shot service: started only by `docker compose run --rm baselines <cmd>`.
+services:
+  baselines:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: "{{ s1_baselines_image }}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      DB_HOST: "{{ s1_baselines_db_host }}"
+      DB_PORT: "{{ s1_baselines_db_port }}"
+      DB_NAME: "{{ s1_baselines_db_name }}"
+      DB_USER: "{{ s1_baselines_db_user }}"
+      DB_PASS: "{{ s1_baselines_db_pass }}"
+    networks:
+      - {{ docker_shared_network | default('infra') }}
+
+networks:
+  {{ docker_shared_network | default('infra') }}:
+    external: true

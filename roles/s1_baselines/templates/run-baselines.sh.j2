@@ -1,0 +1,7 @@
+#!/bin/bash
+# Usage: run-baselines.sh dry-run|apply|migrate [--lookback N]
+# Same entry point for cron and operators. Exit code is the container's.
+set -o pipefail
+cd {{ s1_baselines_dir }} || exit 1
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] run-baselines $*" >> {{ s1_baselines_log_path }}
+docker compose run --rm baselines "$@" 2>&1 | tee -a {{ s1_baselines_log_path }}
