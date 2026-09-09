@@ -39,6 +39,11 @@ jobs:
       - name: Run s1_reporter unit tests
         run: python -m unittest discover -s roles/s1_reporter/tests
 
+      - name: Run s1_baselines unit tests
+        run: |
+          pip install pyyaml
+          python -m unittest discover -s roles/s1_baselines/tests
+
       - name: Run systems_one_ingest unit tests
         run: python -m unittest discover -s roles/systems_one_ingest/tests
 
