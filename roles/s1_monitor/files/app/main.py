@@ -32,6 +32,7 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 from cache import cache
 from queries import fleet as qfleet
 from queries import device as qdevice
+from queries import trends as qtrends
 NOW_OVERRIDE = None   # tests set a fixed time
 
 
@@ -115,6 +116,14 @@ async def api_device_series(device_id: int, range: str = "90d"):
     if payload is None:
         raise HTTPException(status_code=404, detail="unknown device")
     return JSONResponse(payload)
+
+
+@app.get("/api/trends")
+async def api_trends(metric: str = "good_read_pct", range: str = "30d", customer: str = ""):
+    if metric not in ("items", "good_read_pct", "no_dim_pct", "hand_scan_pct", "not_sent_pct") or range not in ("7d", "30d", "90d"):
+        raise HTTPException(status_code=400, detail="bad metric or range")
+    return await in_thread(_cached, f"trends|{metric}|{range}|{customer}", settings.cache_ttl_history,
+                           lambda: qtrends.build_trends(run_query, settings, current_time(), metric, range, customer or None))
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
