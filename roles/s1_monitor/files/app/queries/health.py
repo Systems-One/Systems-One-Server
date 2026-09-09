@@ -16,7 +16,7 @@ def build_health(q, s, now_utc, device_id, preset_name):
     for r in rows:
         r["snapshot_utc"] = qf._dt(r["snapshot_utc"])
     events = av.transitions(rows)
-    stride = max(1, len(rows) // 2000)
+    stride = max(1, -(-len(rows) // 2000))
     thin = rows[::stride]
     out_rows = [{"ts": r["snapshot_utc"].isoformat() + "Z", **{k: r.get(k) for k in ("cpu_percent", "mem_usage_pct", "temp_celsius", "c_usage_percent", "max_usage_percent", "application_running", "status")}} for r in thin]
     return {"history_since": since[0]["since"] if since and since[0]["since"] else None, "rows": out_rows, "events": events}
