@@ -1,3 +1,4 @@
+import dataclasses
 import datetime as dt
 import main
 from fastapi.testclient import TestClient
@@ -43,8 +44,15 @@ def test_fleet_strip_devices_and_attention():
     assert r["attention"][0]["rule"] == "C: drive" and r["attention"][0]["severity"] == "warn"
 
 def test_fleet_customer_filter_and_stale_flag(monkeypatch):
+    # A live ttl of 0 means every request re-validates against the DB instead of short-circuiting
+    # on the warmed entry, so the boom below actually gets a chance to run and fail.
+    monkeypatch.setattr(main, "settings", dataclasses.replace(main.settings, cache_ttl_live=0))
     assert TestClient(main.app).get("/api/fleet?customer=NOPE").json()["devices"] == []
+    assert TestClient(main.app).get("/api/fleet").status_code == 200
     def boom(sql, params=()): raise RuntimeError("down")
     main.QUERY = boom
     r = TestClient(main.app).get("/api/fleet")
     assert r.status_code == 200 and r.json()["stale"] is True
+    main.cache._entries.clear()
+    r2 = TestClient(main.app).get("/api/fleet")
+    assert r2.status_code == 503

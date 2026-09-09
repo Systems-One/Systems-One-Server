@@ -86,13 +86,7 @@ async def api_meta():
 @app.get("/api/fleet")
 async def api_fleet(customer: str = ""):
     key = f"fleet|{customer}"
-    try:
-        return await in_thread(_cached, key, settings.cache_ttl_live, lambda: qfleet.build_fleet(run_query, settings, current_time(), customer or None))
-    except HTTPException:
-        # No cached payload has ever existed for this exact customer filter and the database is down.
-        # Degrade the live tile instead of erroring the whole dashboard.
-        return JSONResponse({"generated_utc": current_time().isoformat() + "Z",
-                              "strip": {}, "attention": [], "devices": [], "stale": True})
+    return await in_thread(_cached, key, settings.cache_ttl_live, lambda: qfleet.build_fleet(run_query, settings, current_time(), customer or None))
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
