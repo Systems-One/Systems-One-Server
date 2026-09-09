@@ -53,6 +53,13 @@
     chdir: "{{ s1_baselines_dir }}"
   changed_when: false
 
+- name: Ensure cron is installed (host had no crontab binary on first deploy)
+  apt:
+    name: cron
+    state: present
+    update_cache: true
+  when: s1_baselines_schedule_enabled | bool
+
 - name: Install weekly baseline recompute cron job
   cron:
     name: "systems-one baselines recompute"
