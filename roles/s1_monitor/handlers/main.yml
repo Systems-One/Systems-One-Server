@@ -1,0 +1,4 @@
+- name: restart s1-monitor
+  command: docker compose up -d --build
+  args:
+    chdir: "{{ s1_monitor_dir }}"

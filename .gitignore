@@ -29,3 +29,9 @@ secrets.yml
 
 # Claude Code session files and worktrees
 .claude/
+
+# SDD workspace directory
+.superpowers/
+
+# s1_monitor workstation secrets
+.env
