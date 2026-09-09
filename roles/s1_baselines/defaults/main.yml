@@ -1,0 +1,19 @@
+---
+# s1_baselines: one-shot recompute of dbo.alert_thresholds, scheduled by host cron.
+s1_baselines_image: "s1-baselines:latest"
+s1_baselines_dir: "/opt/s1-baselines"
+
+s1_baselines_db_host: "mssql"
+s1_baselines_db_port: 1433
+s1_baselines_db_name: "{{ mssql_rm_database | default('S1_Remote_Monitoring') }}"
+# Least-privilege application login, never sa.
+s1_baselines_db_user: "{{ mssql_rm_admin_login | default('admin') }}"
+s1_baselines_db_pass: "{{ mssql_rm_admin_password | default('') }}"
+
+s1_baselines_lookback_days: 60
+
+# Host cron. Sunday 02:00 host-local time (the host runs SAST).
+s1_baselines_schedule_enabled: true
+s1_baselines_schedule_hour: "2"
+s1_baselines_schedule_minute: "0"
+s1_baselines_log_path: "/opt/s1-baselines/baselines.log"
