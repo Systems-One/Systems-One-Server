@@ -56,13 +56,23 @@ class Runner:
             }
         state = AlertState(self.s.offline_state_file)
         d = state.diff(current, self.now)
+        # A device that aged past STALE_DAYS (or was disabled/muted) leaves the state
+        # silently: it did not recover, it stopped being alertable.
+        silent = {liveness.key(st) for st in states if st.state == "stale"}
+        silent |= {liveness.key(st) for st in states
+                   if st.device.muted_until and st.device.muted_until > self.now}
+        enabled = {liveness.key(st) for st in states}
+        recovered = [x for x in d.recovered if _dev_key(x) not in silent and _dev_key(x) in enabled]
+        dropped = [_dev_key(x) for x in d.recovered if x not in recovered]
+        if dropped:
+            print(f"left offline state without recovery (stale/muted/disabled): {dropped}")
         sent = True
         if d.new:
             sent &= self._send(cards.build_offline_alert_card(d.new))
             print(f"offline alert: {[_dev_key(x) for x in d.new]}")
-        if d.recovered:
-            sent &= self._send(cards.build_recovery_card(d.recovered))
-            print(f"recovery: {[_dev_key(x) for x in d.recovered]}")
+        if recovered:
+            sent &= self._send(cards.build_recovery_card(recovered))
+            print(f"recovery: {[_dev_key(x) for x in recovered]}")
         if d.unchanged:
             print(f"still offline (no re-alert): {[_dev_key(x) for x in d.unchanged]}")
         if not (d.new or d.recovered or d.unchanged):

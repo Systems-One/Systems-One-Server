@@ -99,6 +99,32 @@ class TestCheckAlerts(Base):
         self.assertFalse(r.check_alerts())
         self.assertFalse(os.path.exists(self.settings.offline_state_file))
 
+    def test_device_crossing_into_stale_is_not_a_recovery(self):
+        # Yesterday's state file says STALE@DUR was offline; today it is past STALE_DAYS.
+        import json
+        with open(self.settings.offline_state_file, "w") as fh:
+            json.dump({"STALE@DUR": {"machine_name": "STALE", "location": "DUR", "customer": "A",
+                                     "alerted_at": (NOW - timedelta(days=20)).isoformat()}}, fh)
+        rows = {"FROM dbo.devices d\nLEFT JOIN": [device_row(2, "A", "STALE", "DUR", NOW - timedelta(days=60))],
+                "ROW_NUMBER()": []}
+        r = self.runner(rows)
+        self.assertTrue(r.check_alerts())
+        self.assertEqual(self.posted, [])
+        with open(self.settings.offline_state_file) as fh:
+            self.assertEqual(json.load(fh), {})
+
+    def test_real_recovery_still_posts(self):
+        import json
+        with open(self.settings.offline_state_file, "w") as fh:
+            json.dump({"BACK@JHB": {"machine_name": "BACK", "location": "JHB", "customer": "A",
+                                    "alerted_at": (NOW - timedelta(hours=3)).isoformat()}}, fh)
+        rows = {"FROM dbo.devices d\nLEFT JOIN": [device_row(3, "A", "BACK", "JHB", NOW - timedelta(minutes=2))],
+                "ROW_NUMBER()": []}
+        r = self.runner(rows)
+        self.assertTrue(r.check_alerts())
+        self.assertEqual(len(self.posted), 1)
+        self.assertIn("Recovered", str(self.posted[0]))
+
     def test_second_run_is_quiet(self):
         r = self.runner(self._rows())
         r.check_alerts()
