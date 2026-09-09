@@ -1,13 +1,10 @@
 import os
-import sys
 import tempfile
 import time
 import unittest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "files"))
-
-import chart_store  # noqa: E402
+import _bootstrap  # noqa: F401
+from s1_reporter import chart_store
 
 
 class TestSaveChart(unittest.TestCase):

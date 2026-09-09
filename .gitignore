@@ -26,3 +26,6 @@ Thumbs.db
 *.key
 *.pem
 secrets.yml
+
+# Claude Code session files and worktrees
+.claude/

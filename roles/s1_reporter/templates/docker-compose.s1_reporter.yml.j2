@@ -1,38 +1,33 @@
+# reporter: one-shot, started only by `docker compose run --rm reporter <job>` (host cron).
+# s1-charts: long-running nginx serving chart PNGs for Teams cards.
 services:
-  s1-reporter:
+  reporter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: "{{ s1_reporter_image }}"
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: "{{ s1_reporter_image }}"
-    container_name: s1_reporter
-    restart: unless-stopped
     environment:
       DB_HOST: "{{ s1_reporter_db_host }}"
       DB_PORT: "{{ s1_reporter_db_port }}"
-      DB_USER: "{{ s1_reporter_db_user }}"
-      DB_PASS: "{{ mssql_sa_password }}"
       DB_NAME: "{{ s1_reporter_db_name }}"
+      DB_USER: "{{ s1_reporter_db_user }}"
+      DB_PASS: "{{ s1_reporter_db_pass }}"
       TEAMS_WEBHOOK_URL: "{{ vault_s1_reporter_teams_webhook_url }}"
       CHART_DIR: "/data/charts"
       CHART_PUBLIC_BASE_URL: "{{ s1_reporter_chart_public_base_url }}"
       CHART_RETENTION_DAYS: "{{ s1_reporter_chart_retention_days }}"
-      OFFLINE_CHECK_INTERVAL_MINUTES: "{{ s1_reporter_offline_check_interval_minutes }}"
       OFFLINE_THRESHOLD_MINUTES: "{{ s1_reporter_offline_threshold_minutes }}"
-      DAILY_REPORT_HOUR: "{{ s1_reporter_daily_report_hour }}"
-      MONTHLY_REPORT_HOUR: "{{ s1_reporter_monthly_report_hour }}"
+      STALE_DAYS: "{{ s1_reporter_stale_days }}"
+      REPORT_TZ_OFFSET_HOURS: "{{ s1_reporter_tz_offset_hours }}"
+      UPLOAD_ALERT_CONSECUTIVE: "{{ s1_reporter_upload_alert_consecutive }}"
+      UPLOAD_LOOKBACK_PACKETS: "{{ s1_reporter_upload_lookback_packets }}"
       OFFLINE_STATE_FILE: "/data/offline_state.json"
       UPLOAD_STATE_FILE: "/data/upload_state.json"
-    healthcheck:
-      test: ["CMD-SHELL", "[ -f /proc/1/comm ] && grep -q 'entrypoint\\|sh\\|python' /proc/1/comm || cat /proc/1/comm | head -1"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
     volumes:
       - s1_reporter_data:/data
       - s1_reporter_charts:/data/charts

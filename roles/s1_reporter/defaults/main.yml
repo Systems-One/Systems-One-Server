@@ -1,19 +1,35 @@
-# s1_reporter service defaults
+---
+# s1_reporter: Teams alerts and reports, run as one-shot jobs by host cron.
 s1_reporter_image: "s1-reporter:latest"
 s1_reporter_dir: "/opt/s1-reporter"
+s1_reporter_log_path: "/opt/s1-reporter/reporter.log"
+
 s1_reporter_db_host: "mssql"
 s1_reporter_db_port: 1433
-s1_reporter_db_user: "sa"
-s1_reporter_db_name: "S1_Remote_Monitoring"
+s1_reporter_db_name: "{{ mssql_rm_database | default('S1_Remote_Monitoring') }}"
+# Least-privilege application login, never sa.
+s1_reporter_db_user: "{{ mssql_rm_admin_login | default('admin') }}"
+s1_reporter_db_pass: "{{ mssql_rm_admin_password | default('') }}"
 
-# Schedule
-s1_reporter_offline_check_interval_minutes: 20
+# Liveness
 s1_reporter_offline_threshold_minutes: 30
-s1_reporter_daily_report_hour: 6
-s1_reporter_monthly_report_hour: 6
+s1_reporter_stale_days: 14
+# Local day = UTC + this (SAST, no DST)
+s1_reporter_tz_offset_hours: 2
 
-# Teams notifications
-# Public base URL charts are served from (e.g. https://charts.example.com).
-# Empty means charts are still written to disk but no Image is embedded in the card.
+# Upload-failure rule
+s1_reporter_upload_alert_consecutive: 3
+s1_reporter_upload_lookback_packets: 6
+
+# Teams chart hosting
 s1_reporter_chart_public_base_url: ""
 s1_reporter_chart_retention_days: 14
+s1_reporter_chart_local_port: 8091
+s1_reporter_charts_image: "nginx:alpine"
+
+# Host cron (host-local time). weekday 1-5 = Mon-Fri.
+s1_reporter_cron_sync_status:  { minute: "*/20", hour: "*", day: "*", weekday: "*" }
+s1_reporter_cron_check_alerts: { minute: "*/20", hour: "*", day: "*", weekday: "1-5" }
+s1_reporter_cron_daily:        { minute: "0",    hour: "6", day: "*", weekday: "1-5" }
+s1_reporter_cron_monthly:      { minute: "30",   hour: "6", day: "1", weekday: "*" }
+s1_reporter_cron_stale_digest: { minute: "0",    hour: "7", day: "*", weekday: "1" }
