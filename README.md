@@ -1,308 +1,338 @@
-# Systems-One-Server (Ansible)
+# Systems-One-Server
 
-This repository contains Ansible inventories, variables, and playbooks for provisioning and deploying services via roles.
+Ansible repository that builds and runs the Systems One remote-monitoring platform on a
+single production host (`sysone`, also known as `s1_server`). Every service is a Docker
+container deployed by an Ansible role in this repo. The host manages itself (Ansible runs
+on-box with `ansible_connection: local`) and is reached from the internet through a
+Cloudflare Tunnel on `sysone.co.za`.
 
-## Current state (what this repo does)
+What the platform does: scan stations at customer sites publish telemetry over MQTT. The
+server ingests it into SQL Server, and a set of dashboards and a Teams reporter turn it into
+fleet health, throughput and scan-quality views.
 
-Playbooks are split into two tiers:
+- [Architecture](#architecture)
+- [Host and network layout](#host-and-network-layout)
+- [Services](#services)
+- [Data](#data)
+- [Public exposure (Cloudflare Tunnel)](#public-exposure-cloudflare-tunnel)
+- [Also on the box, not managed here](#also-on-the-box-not-managed-here)
+- [Repository layout](#repository-layout)
+- [Deploying](#deploying)
+- [Secrets](#secrets)
+- [Backups](#backups)
+- [Tests and CI](#tests-and-ci)
+- [Grafana](#grafana)
+- [Known rough edges](#known-rough-edges)
 
-- **Web tier**: installs Docker and deploys Cloudflare Tunnel (`cloudflared`) via Docker.
-- **DB tier**: installs Docker and deploys Microsoft SQL Server (Developer) via Docker.
+## Architecture
 
-A top-level `site.yml` playbook runs both tiers.
+```mermaid
+flowchart LR
+    subgraph sites["Customer sites"]
+        dev["Scan stations / devices"]
+        pep["PEP inbound (TCP 10069)"]
+        opc["PPNAM OPC UA"]
+    end
+
+    subgraph host["sysone (single Docker host)"]
+        direction TB
+        cf["cloudflared<br/>(host network)"]
+        mq["mosquitto<br/>1883 / 9001"]
+        ing["mqtt-ingestor-merged<br/>spool, batch, MSSQL"]
+        db[("mssql<br/>S1_Remote_Monitoring")]
+        nr["nodered<br/>(host network)"]
+        gf["grafana :3000"]
+        md["marketing_display :8090"]
+        sfd["scan_fleet_dashboard :8092"]
+        rep["s1_reporter"]
+        charts["s1_reporter_charts<br/>nginx :8091"]
+        tty["s1_dashboard<br/>(TTY1 console)"]
+        bk["backup cron<br/>restic"]
+    end
+
+    teams["Microsoft Teams"]
+    b2["Backblaze B2"]
+    web["Browser via sysone.co.za"]
+
+    dev -- "MQTT systems-one/# and systemsone/#" --> mq
+    mq -- "plus $SYS/# broker stats" --> ing
+    ing --> db
+    pep --> nr
+    opc --> nr
+    nr --> mq
+    db --> gf
+    db --> md
+    db --> sfd
+    db --> rep
+    rep -- "Adaptive Cards" --> teams
+    rep -- "PNG charts" --> charts
+    db --> tty
+    db --> bk
+    mq --> bk
+    bk --> b2
+    web --> cf
+    cf --> gf
+    cf --> md
+    cf --> sfd
+    cf --> charts
+```
+
+Data path in one line: **device to Mosquitto to mqtt_ingestor to SQL Server to Grafana,
+dashboards and reporter**.
+
+## Host and network layout
+
+One Ubuntu host runs everything. Two Ansible plays target it, both resolving to the same
+machine in the `production` inventory:
+
+| Play | Group | Roles (in order) |
+|---|---|---|
+| `webservers.yml` | `webservers` | `docker`, `cloudflared`, `grafana`, `mqtt`, `nodered`, `mqtt_ingestor`, `s1_dashboard`, `s1_reporter`, `marketing_display`, `scan_fleet_dashboard`, `s1_baselines` |
+| `dbservers.yml` | `dbservers` | `docker`, `mssql`, `backup` |
+
+`site.yml` imports both. `staging` is a second inventory with the same group layout
+(`sysone_staging`).
+
+**Docker networking.** All compose stacks join one external bridge network, `infra`
+(`docker_shared_network` in `group_vars/all.yml`), so containers reach each other by name
+(`mssql`, `mosquitto`). Two containers run in `network_mode: host` instead:
+
+- `cloudflared` (production only, see `host_vars/sysone.yml`). Because it is on the host
+  stack it **cannot resolve container names**. Anything routed through the tunnel must
+  publish a loopback port, and the Cloudflare public hostname must point at
+  `localhost:<port>`.
+- `nodered` (production). Its TCP listener for inbound PEP devices binds directly on the
+  host. Staging runs Node-RED in bridge mode and publishes ports explicitly.
+
+**Host port map (production, confirmed with `docker ps` on 2026-09-09):**
+
+| Host bind | Container | Purpose | Reachable from |
+|---|---|---|---|
+| `0.0.0.0:1883` | mosquitto | MQTT (TCP) | Internet / devices |
+| `0.0.0.0:9001` | mosquitto | MQTT over WebSockets | Internet / devices |
+| `0.0.0.0:1433` | mssql | SQL Server | LAN |
+| `0.0.0.0:8084` | mqtt-ingestor-merged | ingestor `/health` (container port 8080) | LAN |
+| `0.0.0.0:9111` | mqtt-ingestor-merged | Prometheus metrics (container port 9108) | LAN |
+| `*:10069` | nodered (host net) | PEP inbound device TCP server | Internet / devices |
+| `127.0.0.1:1880` | nodered (host net) | Node-RED editor | Loopback / tunnel |
+| `127.0.0.1:3000` | grafana | Grafana UI | Loopback / tunnel |
+| `127.0.0.1:8090` | marketing_display | Status page (container port 8000) | Loopback / tunnel |
+| `127.0.0.1:8091` | s1_reporter_charts | Report chart PNGs (nginx) | Loopback / tunnel |
+| `127.0.0.1:8092` | scan_fleet_dashboard | Fleet dashboard API (container port 8000) | Loopback / tunnel |
+
+`scan_fleet_dashboard` defaults to 8091 but is pinned to 8092 in `host_vars/sysone.yml`
+because 8091 is already owned by the chart server.
+
+## Services
+
+Each role renders a `docker-compose.yml` under `/opt/<service>` on the host and runs
+`docker compose up -d`. Application code lives in the role's `files/` directory and is
+built into an image on the host.
+
+| Role | Container | Image | Install dir | What it does |
+|---|---|---|---|---|
+| `docker` | none | none | none | Installs Docker Engine and the Compose plugin, creates the `infra` network, adds the deploy user to the `docker` group. |
+| `cloudflared` | `cloudflared` | `cloudflare/cloudflared` | `/opt/cloudflared` | Cloudflare Tunnel client. Token from vault. Host network mode in production. |
+| `mqtt` | `mosquitto` | `eclipse-mosquitto:2` | `/opt/mqtt` | MQTT broker with persistence and password auth only (no anonymous). Ports 1883 and 9001. The password file is regenerated whenever the vault credentials change. `mosquitto_max_packet_size` caps packet size. |
+| `mqtt_ingestor` | `mqtt-ingestor-merged` | built `mqtt-ingestor-merged:latest` | `/opt/mqtt_ingestor` | The single ingest process. One MQTT client subscribed to `systems-one/#`, `systemsone/#` and `$SYS/#`. Device telemetry goes to `dbo.*` tables and broker stats to `broker.broker_stats`, through a SQLite spool, a batched writer, retry with backoff and a dead-letter table. Optional customer/location allowlist. Exposes `/health` and Prometheus metrics. |
+| `mssql` | `mssql` | `mcr.microsoft.com/mssql/server:2022-latest` | `/opt/mssql` | SQL Server Developer edition. Creates `S1_Remote_Monitoring`, the `admin` application login and the `dbo.*` schema from `bootstrap.remote_monitoring.sql.j2`. A second bootstrap for a legacy `Systems_One` database exists but only runs when `mssql_bootstrap_enabled` is true. |
+| `nodered` | `nodered` | `nodered/node-red` | `/opt/nodered` | Two flows from `files/flows.json`: **PEP Inbound Server** (TCP server on 10069 for devices that speak raw TCP rather than MQTT) and **PPNAM Station 2 MQTT** (OPC UA endpoints republished to MQTT). Flows and `settings.js` are provisioned from the repo unless Projects mode is enabled. |
+| `grafana` | `grafana` | `grafana/grafana-oss` | `/opt/grafana` | Broker and system health dashboards over an MSSQL datasource. Dashboards come from a separate repo via Grafana Git Sync, and orgs and users are provisioned through the HTTP API on each deploy. See [Grafana](#grafana). |
+| `marketing_display` | `marketing_display` | built `marketing-display:latest` | `/opt/marketing-display` | FastAPI plus static HTML and Chart.js "S1 Remote Monitoring" status page (`/` and `history.html`). Read-only over the RM database with a 30 s cache. |
+| `scan_fleet_dashboard` | `scan_fleet_dashboard` | built `scan-fleet-dashboard:latest` | `/opt/scan-fleet-dashboard` | FastAPI JSON API for the fleet dashboard: customers, machines, performance, throughput KPIs, intraday and per-machine views, per-customer thresholds and optional per-user customer scoping (`AUTH_ENABLED`). Runs side-by-side with `marketing_display` until cutover. |
+| `s1_reporter` | `s1_reporter` and `s1_reporter_charts` | built `s1-reporter:latest`, `nginx:alpine` | `/opt/s1-reporter` | Scheduler loop in `entrypoint.sh`: device-status DB sync every 20 min, offline/recovery alerts and upload-failure checks every 20 min on weekdays, daily report at 06:00, monthly report on the 1st at 06:30. Posts Adaptive Cards to Microsoft Teams via a Power Automate webhook. Chart PNGs land on a shared volume that nginx serves as `charts.sysone.co.za`. |
+| `s1_baselines` | none (one-shot via `compose run`) | built `s1-baselines:latest` | `/opt/s1-baselines` | Recomputes `dbo.alert_thresholds` from 60 days of `device_statistics`. Host cron runs `run-baselines.sh apply` every Sunday 02:00; operators run `run-baselines.sh dry-run` to preview. Owns the table's DDL via `migrate`. |
+| `s1_dashboard` | none (host process) | none | `/opt/s1-dashboard` | Stdlib-only Python status screen on the physical console. Configures `getty@tty1` autologin for the deploy user and launches the dashboard from `.profile`. Shows today/week/year scan totals, host metrics, Docker health and a problems-only log pane. |
+| `backup` | none (cron) | `restic/restic:0.17` | `/opt/backup` | Nightly 02:30 restic backup of the RM database (`.bak`) and the Mosquitto volume to Backblaze B2. A pre-deploy gate in both plays refuses to run if the last successful backup is older than `backup_gate_max_age_hours`. Off by default (`backup_enabled: false`). See `roles/backup/README.md`. |
+| `systems_one_ingest` | none | none | none | **Retired.** The original ingestor, superseded by `mqtt_ingestor`. Not referenced by any play. The role and its tests are still in the repo. |
+
+Which service talks to what:
+
+| Consumer | Reads / writes | Login used |
+|---|---|---|
+| `mqtt_ingestor` | writes `dbo.*`, `broker.broker_stats`, `ingest.*` | `mssql_rm_admin_login` (`admin`) |
+| `marketing_display`, `scan_fleet_dashboard`, `s1_dashboard` | read `S1_Remote_Monitoring` | `admin` |
+| `grafana` | reads `S1_Remote_Monitoring` via the provisioned MSSQL datasource | `admin` |
+| `s1_reporter` | reads telemetry, writes `dbo.device_status` | `sa` (see rough edges) |
+| `s1_baselines` | reads `device_statistics`, writes `alert_thresholds` | `admin` |
+| `nodered` | publishes to `mosquitto` | vault MQTT user |
+| `backup` | dumps `mssql`, tars the Mosquitto volume | `sa` inside the container |
+
+## Data
+
+One database, `S1_Remote_Monitoring`, on the `mssql` container. The schema is created by
+`roles/mssql/templates/bootstrap.remote_monitoring.sql.j2` and extended by
+`roles/mqtt_ingestor/files/app/migrations/001_init_schema.sql`.
+
+| Schema.table | Written by | Purpose |
+|---|---|---|
+| `dbo.devices` | ingestor | Device registry keyed by customer, location and machine name. Machine names such as `DIM1` repeat across sites, so the key is the triple. |
+| `dbo.device_status` | ingestor, reporter | Latest online/offline state per device. |
+| `dbo.device_application_status`, `device_os_status`, `device_uptime_status`, `device_storage_status`, `device_os_metrics` | ingestor | Latest per-device application, OS, uptime, storage and OS-metric snapshots (MERGE upserts). |
+| `dbo.device_statistics` | ingestor | Append-only scan statistics per interval: items, good reads, no-dim and so on. Source for every dashboard and report. |
+| `broker.broker_stats` | ingestor | Mosquitto `$SYS` snapshots. |
+| `ingest.pipeline_state`, `ingest.telemetry_deadletter` | ingestor | Pipeline bookkeeping and messages that failed every retry. |
+| `dbo.DailyStats`, `driver_log`, `ItemLog`, `TripInfo` | legacy `Systems_One` bootstrap | Older schema, only created when `mssql_bootstrap_enabled` is true. |
+
+Persistent Docker volumes: `mssql_data`, `mosquitto_data`, `grafana_data`,
+`s1_reporter_data`, `s1_reporter_charts`, and the ingestor's `spool-data` and
+`settings-data`. Node-RED state is a bind mount at `/opt/nodered/data`.
+
+## Public exposure (Cloudflare Tunnel)
+
+Nothing except MQTT, SQL Server and the Node-RED device listener is published beyond
+loopback. Web UIs are reached through the Cloudflare Tunnel, whose public hostnames are
+configured in Cloudflare Zero Trust, not in this repo. Known routes:
+
+| Hostname | Target on the host |
+|---|---|
+| `sysone.co.za` | `localhost:8090` (marketing_display) |
+| `charts.sysone.co.za` | `localhost:8091` (s1_reporter_charts) |
+| `charts-staging.sysone.co.za` | staging equivalent |
+
+Grafana, the scan-fleet API and the Node-RED editor are also loopback-bound and served the
+same way. Because `cloudflared` runs on the host network, every tunnel target must be a
+`localhost:<port>` address, never a container name.
+
+## Also on the box, not managed here
+
+`docker ps` on `sysone` shows containers this repo does not own. Leave them alone:
+
+| Container(s) | What it is |
+|---|---|
+| `eskom-asset-management-web-1`, `eskom-asset-management-sql-1` | Separate .NET app with its own SQL Server (port 14333), different owner. |
+| `ppnam-sync-sync-service-1`, `ppnam-sync-central-sql-1` | Separate sync service with its own SQL Server (port 14330). |
+| `wetty` | Browser SSH terminal on `127.0.0.1:4000`, hand-deployed. Fallback shell access. |
+
+Directories under `/home/s1` such as `mqtt-ingestor` and `broker-ingestor` are the old
+hand-deployed ingestors. Their containers are no longer running; `mqtt_ingestor` replaced
+both.
 
 ## Repository layout
 
-- `ansible.cfg`
-  - Default Ansible config for this repo.
-  - Defaults `inventory` to `production`.
-
-- `production`
-  - Production inventory (INI-style).
-  - Defines `webservers` and `dbservers` host groups.
-
-- `staging`
-  - Staging inventory (INI-style).
-  - Same group structure as production.
-
-- `site.yml`
-  - Master playbook.
-  - Imports `webservers.yml` and `dbservers.yml`.
-
-- `webservers.yml`
-  - Runs against the `webservers` group.
-  - Applies roles: `docker`, `cloudflared`.
-
-- `dbservers.yml`
-  - Runs against the `dbservers` group.
-  - Applies roles: `docker`, `mssql`.
-
-- `group_vars/`
-  - Group-scoped variables.
-  - `dbservers.yml`: database-tier variables (e.g. `mssql_port`).
-  - `vault.yml`: encrypted variables file (Ansible Vault). It is **not** auto-loaded; it is included explicitly by the tier playbooks.
-
-- `host_vars/`
-  - Per-host variables.
-  - Example: `sysone.yml` contains host connection settings and host-specific values.
-
-- `roles/`
-  - Roles used by the playbooks.
-  - `docker`: Docker installation.
-  - `cloudflared`: Cloudflare Tunnel deployment (Docker Compose template).
-  - `mssql`: MSSQL deployment (Docker Compose template).
-
-## Prerequisites
-
-- Ansible installed on your control machine.
-- SSH connectivity to target hosts.
-- If using Vaulted variables: a vault password available via `--ask-vault-pass` or `--vault-password-file`.
-
-## How to use
-
-### 1) Edit inventory
-
-Add hosts to `production` and/or `staging` under the appropriate groups:
-
-```ini
-[webservers]
-my-web-1
-
-[dbservers]
-my-db-1
+```
+ansible.cfg                inventory=production, roles_path=roles, vault_password_file=.vault_pass
+site.yml                   imports webservers.yml and dbservers.yml
+webservers.yml             web tier play (all application roles)
+dbservers.yml              db tier play (mssql and backup)
+production / staging       INI inventories (sysone / sysone_staging)
+group_vars/all.yml         shared network name, Node-RED mode, backup gate defaults
+group_vars/dbservers.yml   RM database name and application login
+group_vars/vault.yml       Ansible Vault with all secrets, loaded explicitly by each play
+host_vars/sysone.yml       production host: local connection, host-network cloudflared, Grafana users, ports
+host_vars/sysone_staging.yml  staging host overrides
+roles/                     one role per service (see Services)
+docs/superpowers/          dated design specs and implementation plans
+tools/                     grafana_export_dashboards.py, sync_nodered_flows.py
+scripts/                   install-github-actions-runner.sh (self-hosted runner)
+molecule/                  Molecule scenario for the docker role
+.github/workflows/         ci.yml, deploy.yml, rollback.yml
+VAULT_VARS.md              reference for every vault variable
+PRODUCT.md                 product context for UI work
 ```
 
-### 2) Add host connection details
+## Deploying
 
-Create or update files in `host_vars/` matching each inventory hostname.
+Ansible runs **on the server**, from the checkout at `/home/s1/Systems-One-Server`. There is
+no separate control node.
 
-Example: `host_vars/my-web-1.yml`
-
-```yaml
-ansible_host: 192.168.1.10
-ansible_user: ubuntu
-ansible_ssh_private_key_file: /home/you/.ssh/id_ed25519
-```
-
-### 3) Run the playbooks
-
-Run everything (web + db) in **production** (default inventory):
+Manual deploy:
 
 ```bash
-ansible-playbook site.yml
+ssh s1_server
+cd /home/s1/Systems-One-Server
+git fetch origin && git merge --ff-only origin/master
+ansible-playbook -i production webservers.yml                        # all app roles
+ansible-playbook -i production webservers.yml --tags s1_reporter     # one role
+ansible-playbook -i production dbservers.yml                         # mssql and backup
 ```
 
-Run everything in **staging**:
+Roles that carry tags: `mqtt_ingestor`, `s1_reporter`, `marketing_display`,
+`scan_fleet_dashboard`, `s1_baselines`. Using `--tags` skips untagged tasks, which is why the vault-loading
+and backup-gate pre-tasks are tagged `always`.
+
+GitHub Actions (`.github/workflows`):
+
+- **Deploy** (`workflow_dispatch`): syntax-checks the chosen ref, then a self-hosted runner
+  labelled `s1-server` checks it out on the box, refuses to proceed over uncommitted local
+  changes, runs `webservers.yml` (optionally scoped by role tag) and pushes a
+  `deploy-YYYYMMDD-HHMMSS` git tag.
+- **Rollback** (`workflow_dispatch`): checks out a previous `deploy-*` tag and re-runs
+  `webservers.yml`.
+- Neither workflow runs `dbservers.yml`. Database and backup changes are applied by hand.
+
+Staging:
 
 ```bash
 ansible-playbook -i staging site.yml
 ```
 
-## Grafana: dashboards + orgs/users as code
+## Secrets
 
-This repo provisions Grafana via Docker Compose and supports two approaches:
-
-- **Dashboards/datasources**: file provisioning from this repo (portable across machines).
-- **Orgs/users/teams**: optional API provisioning via Ansible (portable across machines).
-
-You can also enable Grafana's experimental Git Sync feature (Grafana v12+) to sync **dashboards and folders** with a GitHub repository.
-
-### Git Sync (Grafana v12 experimental)
-
-To enable the Provisioning UI required for Git Sync in this deployment, set in host/group vars:
-
-```yaml
-grafana_git_sync_enabled: true
-
-# Optional but recommended if you plan to use webhooks / preview links:
-# grafana_root_url: "https://grafana.example.com/"
-```
-
-Then redeploy Grafana.
-
-After Grafana restarts, configure Git Sync in the UI:
-
-- Administration -> Provisioning -> Configure Git Sync
-
-Note: When `grafana_git_sync_enabled` is true, this role skips the legacy file-based dashboard provisioning (dashboard JSON copy + provider) to avoid confusion. Datasource provisioning remains enabled.
-
-### Dashboards (file provisioning)
-
-Dashboard JSON files live under:
-
-- [roles/grafana/files/dashboards](roles/grafana/files/dashboards)
-
-They are mounted read-only into Grafana and loaded via the provisioning file template.
-
-#### Export dashboards from Grafana back into the repo
-
-Grafana does not automatically push UI changes back into Git. The typical workflow is:
-
-1) Build/update dashboards in the Grafana UI
-2) Export dashboards to JSON
-3) Commit the JSON into this repo
-
-To make step (2) fast, use the export script:
+All secrets live in `group_vars/vault.yml`, encrypted with Ansible Vault. The vault
+password sits in the gitignored `.vault_pass` on each machine that runs Ansible. Every
+variable is listed in `VAULT_VARS.md`. Edit with:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r tools/requirements.txt
-
-# Example (through SSH port-forward):
-python tools/grafana_export_dashboards.py \
-  --url http://127.0.0.1:3000 \
-  --username admin \
-  --password '***' \
-  --out-dir roles/grafana/files/dashboards \
-  --overwrite
+ansible-vault edit group_vars/vault.yml
 ```
 
-Then re-run the playbook to sync dashboards onto another host.
+Plays load the vault file explicitly in `pre_tasks` and then assert the variables they need,
+so a missing secret fails early with a clear message.
 
-### Orgs/users/teams (API provisioning)
+## Backups
 
-Grafana does not support declarative provisioning of orgs/users purely via provisioning files. To make orgs/users portable, this repo includes an optional Ansible step that calls the Grafana HTTP API after Grafana starts.
+Nightly restic snapshots of the RM database and the Mosquitto volume go to Backblaze B2,
+with 7 daily, 4 weekly and 6 monthly retention. When enabled, both plays are gated on a
+recent successful backup before touching anything. Enable, disable and disaster-recovery
+steps are in `roles/backup/README.md`.
 
-Configure in host/group vars:
+## Tests and CI
 
-```yaml
-grafana_api_provision_enabled: true
+`ci.yml` runs on every push and pull request to `master`:
 
-grafana_orgs:
-  - name: "Main"
+- yamllint over the repo
+- unit tests for `s1_dashboard`, `s1_reporter`, `systems_one_ingest` and `mqtt_ingestor`
+- `ansible-lint --profile=min site.yml` (warning only)
+- `ansible-playbook site.yml --syntax-check` with placeholder secrets
+- Molecule converge and verify of the `docker` role in a systemd Ubuntu container
 
-grafana_users:
-  - login: "alice"
-    email: "alice@example.com"
-    name: "Alice"
-    password: "{{ vault_grafana_alice_password }}"
-    orgs:
-      - name: "Main"
-        role: "Editor"
-
-grafana_teams:
-  - org: "Main"
-    name: "SRE"
-    members: ["alice"]
-```
-
-Notes:
-
-- Keep user passwords in Vault (recommended).
-- If you use SSO (Google/GitHub/OIDC/LDAP), it is usually better to manage access there rather than in Grafana local users.
-
-Run only the web tier:
+Run tests locally:
 
 ```bash
-ansible-playbook webservers.yml
-# or staging:
-ansible-playbook -i staging webservers.yml
+python -m unittest discover -s roles/s1_reporter/tests
+python -m unittest discover -s roles/mqtt_ingestor/tests
+python -m pytest roles/scan_fleet_dashboard/tests
 ```
 
-Run only the DB tier:
+## Grafana
 
-```bash
-ansible-playbook dbservers.yml
-# or staging:
-ansible-playbook -i staging dbservers.yml
-```
+- **Dashboards** are synced from the dedicated repo
+  [Jwagener1/grafana](https://github.com/Jwagener1/grafana) (`grafana/` path, `main`
+  branch) using Grafana v12 Git Sync, configured idempotently through the provisioning API
+  in `roles/grafana/tasks/git_sync.yml`. Legacy file provisioning is skipped while Git Sync
+  is on.
+- **Datasource** is the MSSQL RM database, provisioned from a template with a fixed UID that
+  the dashboards reference.
+- **Orgs and users** are created and updated via the HTTP API on every deploy from
+  `grafana_users` in `host_vars`. Passwords are vault-backed. One live account,
+  `cust_pepkor`, is intentionally left unmanaged.
+- Session lifetimes are extended so kiosk dashboards do not spam token-rotation errors.
+- `tools/grafana_export_dashboards.py` pulls dashboards out of a running Grafana as JSON if
+  you need to seed the dashboard repo.
 
-### 4) Using Ansible Vault
+## Known rough edges
 
-This repo uses an encrypted vars file at `group_vars/vault.yml`.
+Starting points for the overhaul, all confirmed against the repo or the live host:
 
-To run playbooks that reference vaulted variables:
-
-```bash
-ansible-playbook site.yml --ask-vault-pass
-```
-
-Or with a password file:
-
-```bash
-ansible-playbook site.yml --vault-password-file /path/to/vault-pass.txt
-```
-
-### 5) Validate what Ansible sees
-
-List inventory and variables:
-
-```bash
-ansible-inventory --list -y
-```
-
-Inspect one host:
-
-```bash
-ansible-inventory --host <hostname> -y
-```
-
-## Keeping flows & dashboards in sync
-
-Ansible pushes configuration *to* the server. Changes made in the Node-RED or Grafana UI need to be pulled *back* into this repo before the next playbook run overwrites them.
-
-### Option A — Pull script (works always)
-
-```bash
-# Pull Node-RED flows only
-python3 tools/sync_nodered_flows.py --host 192.168.1.110 --user s1
-
-# Pull flows + Grafana dashboards and auto-commit
-python3 tools/sync_nodered_flows.py \
-    --host 192.168.1.110 --user s1 \
-    --grafana-url http://127.0.0.1:3000 --grafana-password '<admin-password>' \
-    --commit
-```
-
-### Option B — Node-RED Projects mode (git-native)
-
-Enable in host/group vars:
-
-```yaml
-nodered_projects_enabled: true
-nodered_credential_secret: "{{ vault_nodered_credential_secret }}"
-nodered_git_user_name: "Jonathan"
-nodered_git_user_email: "jonathan@example.com"
-```
-
-Then in the Node-RED UI:
-1. You will see a **Projects** screen on first load
-2. Create a new project or clone from GitHub
-3. Point it to `https://github.com/Jwagener1/Systems-One-Server`
-4. Enter your GitHub credentials/token
-5. Node-RED will commit and push flow changes automatically
-
-**Note:** When `nodered_projects_enabled: true`, Ansible skips copying `flows.json` — the git project is the source of truth.
-
-### Option C — Grafana Git Sync (Grafana v12+)
-
-Grafana dashboards live in a **dedicated repo**: [https://github.com/Jwagener1/grafana](https://github.com/Jwagener1/grafana)
-
-The repo layout is:
-```
-grafana/
-  admin_panel.json
-  machine_detail.json
-  PEPKOR/
-    device_drill_down.json
-    pepkor_overview.json
-  Provisioned/
-```
-
-The defaults in this repo already point Git Sync at the correct repo and path. Just supply a GitHub token in vault and enable it:
-
-```yaml
-grafana_git_sync_enabled: true
-grafana_git_sync_token: "{{ vault_github_token }}"
-```
-
-Ansible will configure Git Sync automatically via the Grafana API after deploy. Dashboard changes in the Grafana UI are committed and pushed to `https://github.com/Jwagener1/grafana` automatically.
-
-> **Note:** `grafana_dashboard_folders_from_files: true` is set by default so subfolders like `PEPKOR/` become Grafana folders automatically.
-
-## Notes / conventions
-
-- Hostnames in `production` / `staging` should match filenames in `host_vars/` (e.g. `sysone` → `host_vars/sysone.yml`).
-- Group variables go into `group_vars/<groupname>.yml` (e.g. `group_vars/dbservers.yml`).
-- `group_vars/vault.yml` is intentionally not auto-loaded to avoid requiring a vault password for commands like `ansible-inventory --list`.
+- `s1_reporter` connects as `sa`. Everything else, including `s1_baselines`, uses the least-privilege `admin` login.
+- `mssql_rm_admin_password` is plain text in `group_vars/dbservers.yml`, not in the vault.
+- `roles/systems_one_ingest` is retired but still shipped and still tested in CI.
+- The Deploy and Rollback workflows only cover `webservers.yml`.
+- Cloudflare public hostnames are not captured anywhere in the repo, and the host-network
+  `cloudflared` constraint has already caused one production 502.
+- `marketing_display` and `scan_fleet_dashboard` overlap. The plan is for the latter to
+  replace the former.
+- `ppnam-sync`, `wetty` and the Eskom app share the host but sit outside Ansible.
+- `nodered` runs `nodered/node-red:latest` in production while staging pins `5.0`.
+- The `mqtt` role ships an empty `Caddyfile.j2` that nothing uses.

@@ -14,9 +14,8 @@ last_offline_sync=0
 last_upload_check=0
 last_daily_date=""
 last_monthly_month=""
-last_baseline_week=""
 
-echo "S1 Reporter starting — offline check every ${OFFLINE_INTERVAL}min, daily at ${DAILY_HOUR}:00, monthly on 1st at ${MONTHLY_HOUR}:30, baselines every Sunday at 02:00 (no alerts Sat/Sun)"
+echo "S1 Reporter starting — offline check every ${OFFLINE_INTERVAL}min, daily at ${DAILY_HOUR}:00, monthly on 1st at ${MONTHLY_HOUR}:30 (no alerts Sat/Sun)"
 
 while true; do
     now=$(date +%s)
@@ -71,12 +70,6 @@ while true; do
         last_monthly_month=$month_str
     fi
 
-    # Weekly baseline recompute — every Sunday at 02:00
-    if [ "$dow" -eq 7 ] && [ "$hour" -eq 2 ] && [ "$minute" -lt 2 ] && [ "$week_str" != "$last_baseline_week" ]; then
-        echo "[$(date '+%Y-%m-%d %H:%M')] Running weekly baseline recompute..."
-        python3 /app/compute_baselines.py
-        last_baseline_week=$week_str
-    fi
 
     sleep 60
 done

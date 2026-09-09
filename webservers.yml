@@ -39,3 +39,5 @@
       tags: [marketing_display]
     - role: scan_fleet_dashboard
       tags: [scan_fleet_dashboard]
+    - role: s1_baselines
+      tags: [s1_baselines]

@@ -1,0 +1,72 @@
+---
+- name: Ensure s1_baselines directory exists
+  file:
+    path: "{{ s1_baselines_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Validate required variables
+  assert:
+    that:
+      - s1_baselines_db_pass | length > 0
+    fail_msg: "s1_baselines_db_pass is empty; set mssql_rm_admin_password in group_vars/dbservers.yml"
+
+- name: Copy application source
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ s1_baselines_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: Dockerfile,           dest: Dockerfile }
+    - { src: compute_baselines.py, dest: compute_baselines.py }
+    - { src: migrations/,          dest: migrations/ }
+
+- name: Render docker-compose file
+  template:
+    src: docker-compose.s1_baselines.yml.j2
+    dest: "{{ s1_baselines_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Render run-baselines.sh wrapper
+  template:
+    src: run-baselines.sh.j2
+    dest: "{{ s1_baselines_dir }}/run-baselines.sh"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Build s1_baselines image
+  command: docker compose build
+  args:
+    chdir: "{{ s1_baselines_dir }}"
+  changed_when: false
+
+- name: Run migrations (creates dbo.alert_thresholds when absent)
+  command: docker compose run --rm baselines migrate
+  args:
+    chdir: "{{ s1_baselines_dir }}"
+  changed_when: false
+
+- name: Install weekly baseline recompute cron job
+  cron:
+    name: "systems-one baselines recompute"
+    user: root
+    weekday: "0"
+    hour: "{{ s1_baselines_schedule_hour }}"
+    minute: "{{ s1_baselines_schedule_minute }}"
+    job: "{{ s1_baselines_dir }}/run-baselines.sh apply --lookback {{ s1_baselines_lookback_days }} >> {{ s1_baselines_log_path }} 2>&1"
+    state: present
+  when: s1_baselines_schedule_enabled | bool
+
+- name: Remove baseline cron job when schedule disabled
+  cron:
+    name: "systems-one baselines recompute"
+    user: root
+    state: absent
+  when: not (s1_baselines_schedule_enabled | bool)

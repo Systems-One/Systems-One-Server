@@ -20,7 +20,6 @@ RUN pip install --no-cache-dir pymssql matplotlib numpy
 
 COPY report.py /app/report.py
 COPY upload_monitor.py /app/upload_monitor.py
-COPY compute_baselines.py /app/compute_baselines.py
 COPY teams_notifier.py /app/teams_notifier.py
 COPY cards.py /app/cards.py
 COPY chart_store.py /app/chart_store.py
