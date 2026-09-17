@@ -149,9 +149,9 @@ function drawHeat(d,S,host){
     visualMap:{seriesIndex:0,min:0,max:vmax,calculable:false,orient:'vertical',right:8,top:26,itemHeight:140,textStyle:{color:C.ink2,fontSize:10},inRange:{color:['#1c2533','#1c3a66','#1c5cab','#2a78d6','#3987e5','#5598e7','#86b6ef']},text:[isPct?'100%':num(maxV),'0']},
     tooltip:Object.assign({trigger:'item',formatter:p=>{ if(p.seriesName==='nodata') return '<b>No data received</b><br>'+fmtS(dates[p.value[1]],'day')+' '+pad(p.value[0])+':00';
       return '<b>'+(isPct?p.value[2].toFixed(1)+'% '+m.name.replace(' %','').toLowerCase():num(p.value[2])+' items')+'</b>'+(isPct?'<br>'+num(p.value[3])+' items'+(p.value[3]<MIN_HOUR?' (under '+MIN_HOUR+', rate not trusted)':''):'')+'<br>'+fmtS(dates[p.value[1]],'day')+' '+pad(p.value[0])+':00 to '+pad(p.value[0]+1)+':00';}},TIP),
-    series:[{name:'v',type:'heatmap',data:cells,label:{show:true,fontSize:10,fontFamily:'Inter',color:C.ink,formatter:p=>isPct?(p.value[3]<MIN_HOUR?'':Math.round(p.value[2])):(p.value[2]>0?p.value[2]:'')},itemStyle:{borderColor:C.panel,borderWidth:1},emphasis:{itemStyle:{borderColor:C.ink,borderWidth:1}}},
+    series:[{name:'v',type:'heatmap',data:cells,label:{show:true,fontSize:10,fontFamily:'Inter',color:C.ink,formatter:p=>isPct?Math.round(p.value[2])+'%':(p.value[2]>0?p.value[2]:'')},itemStyle:{borderColor:C.panel,borderWidth:1},emphasis:{itemStyle:{borderColor:C.ink,borderWidth:1}}},
       {name:'nodata',type:'heatmap',data:nodata,itemStyle:{color:'rgba(208,59,59,.45)',borderColor:C.panel,borderWidth:1},label:{show:false}}]});
-  attachDownload((host||document).querySelector('#figHeatBox'),c4,{title:label(d)+' · '+m.name+' heatmap, last '+R.days+' days',sub:d.customer+' · date by hour of day'+(isPct?' · hours under '+MIN_HOUR+' items left blank':''),name:[d.customer,d.location,d.machine_name,m.name+' heatmap',RG]});
+  attachDownload((host||document).querySelector('#figHeatBox'),c4,{title:label(d)+' · '+m.name+' heatmap, last '+R.days+' days',sub:d.customer+' · date by hour of day',name:[d.customer,d.location,d.machine_name,m.name+' heatmap',RG]});
 }
 
 /* ---------- host history: disk, memory, CPU, temperature and the app/reboot markers ---------- */
