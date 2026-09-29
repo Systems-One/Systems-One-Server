@@ -32,6 +32,7 @@ class Config:
     check_interval: float = 5.0
     connect_timeout: float = 3.0
     idle_timeout: float = 60.0
+    reply_grace: float = 2.0
     allowed_clients: list = field(default_factory=lambda: ["100.64.0.0/10"])
     heartbeat_file: str | None = "/tmp/relay-heartbeat"
 
@@ -47,7 +48,7 @@ class Config:
         for name, cast in (
             ("listen_port", int), ("printer_port", int),
             ("check_interval", float), ("connect_timeout", float),
-            ("idle_timeout", float),
+            ("idle_timeout", float), ("reply_grace", float),
         ):
             if env.get(name.upper()):
                 setattr(cfg, name, cast(env[name.upper()]))
@@ -163,6 +164,8 @@ class Relay:
         peer = c_writer.get_extra_info("peername") or ("?", 0)
         client = peer[0]
         started = time.monotonic()
+        p_writer = None
+        pipes = ()
         try:
             if not self._allowed(client):
                 log.warning("rejected client %s (not in ALLOWED_CLIENTS)", client)
@@ -178,17 +181,30 @@ class Relay:
                 _abort(c_writer)
                 await self._close_listener()
                 return
-            sent, received = await asyncio.gather(
-                self._pipe(c_reader, p_writer), self._pipe(p_reader, c_writer),
-            )
-            for w in (p_writer, c_writer):
-                w.close()
+            up = asyncio.create_task(self._pipe(c_reader, p_writer))
+            down = asyncio.create_task(self._pipe(p_reader, c_writer))
+            pipes = (up, down)
+            done, _ = await asyncio.wait(pipes, return_when=asyncio.FIRST_COMPLETED)
+            if up in done:
+                # Client finished sending. The printer may hold its side open
+                # indefinitely, which would block the next job on printers that
+                # take one connection at a time, so only wait briefly for a reply.
+                await asyncio.wait((down,), timeout=self.cfg.reply_grace)
+            else:
+                await asyncio.wait((up,), timeout=self.cfg.reply_grace)
+            sent = up.result() if up.done() else 0
+            received = down.result() if down.done() else 0
             if sent or received:
                 log.info("client %s: job relayed, %d bytes to printer, %d bytes back, %.2fs",
                          client, sent, received, time.monotonic() - started)
             else:
                 log.debug("client %s: connection probe (no data)", client)
         finally:
+            for t in pipes:
+                t.cancel()
+            for w in (p_writer, c_writer):
+                if w is not None:
+                    w.close()
             self._conns.discard(task)
 
     async def start(self):
@@ -203,8 +219,10 @@ class Relay:
                 pass
             self._task = None
         await self._close_listener()
-        for t in list(self._conns):
+        conns = list(self._conns)
+        for t in conns:
             t.cancel()
+        await asyncio.gather(*conns, return_exceptions=True)
 
 
 async def main():

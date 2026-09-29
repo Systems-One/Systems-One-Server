@@ -21,14 +21,19 @@ def free_port():
 class FakePrinter:
     """Accepts connections and records every byte received per connection."""
 
-    def __init__(self, port):
+    def __init__(self, port, hold_open=False):
         self.port = port
+        self.hold_open = hold_open  # like a real printer that never hangs up
         self.jobs = []
         self.server = None
+        self._writers = set()
 
     async def _handle(self, reader, writer):
+        self._writers.add(writer)
         data = await reader.read()  # until client EOF
         self.jobs.append(data)
+        if self.hold_open:
+            await asyncio.sleep(3600)
         writer.close()
 
     async def start(self):
@@ -36,7 +41,10 @@ class FakePrinter:
 
     async def stop(self):
         self.server.close()
-        await self.server.wait_closed()
+        for w in self._writers:
+            w.close()
+        # Python 3.12+ wait_closed() waits for every connection; never hang CI.
+        await asyncio.wait_for(self.server.wait_closed(), 5)
 
 
 async def can_connect(port):
@@ -97,6 +105,40 @@ class RelayTests(unittest.IsolatedAsyncioTestCase):
             return job in self.printer.jobs
 
         self.assertTrue(await wait_until(got_job))
+
+    async def test_releases_printer_when_printer_never_hangs_up(self):
+        self.printer = FakePrinter(self.printer_port, hold_open=True)
+        self.cfg.reply_grace = 0.3
+        self.relay = relay.Relay(self.cfg)
+        await self.printer.start()
+        await self.relay.start()
+        self.assertTrue(await wait_until(lambda: self.relay.listening_async()))
+
+        _, w = await asyncio.open_connection("127.0.0.1", self.listen_port)
+        w.write(b"PRINT 1,1\r\n")
+        await w.drain()
+        w.close()
+
+        async def released():
+            return b"PRINT 1,1\r\n" in self.printer.jobs and not self.relay._conns
+
+        self.assertTrue(await wait_until(released, timeout=2))
+
+    async def test_stop_closes_open_connections(self):
+        await self.printer.start()
+        await self.relay.start()
+        self.assertTrue(await wait_until(lambda: self.relay.listening_async()))
+        _, w = await asyncio.open_connection("127.0.0.1", self.listen_port)
+        w.write(b"SIZE 50 mm,35 mm\r\n")  # client stays connected
+        await w.drain()
+        self.assertTrue(await wait_until(self._has_conn))
+        await asyncio.wait_for(self.relay.stop(), 2)
+        await asyncio.wait_for(self.printer.stop(), 2)
+        self.printer.server = None
+        w.close()
+
+    async def _has_conn(self):
+        return bool(self.relay._conns)
 
     async def test_refuses_connections_while_printer_down(self):
         await self.relay.start()  # printer never started
