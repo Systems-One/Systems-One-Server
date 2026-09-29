@@ -1,0 +1,4 @@
+- name: restart printer-relay
+  command: docker compose up -d --build
+  args:
+    chdir: "{{ printer_relay_dir }}"

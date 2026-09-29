@@ -1,0 +1,21 @@
+# Only hosts on the office LAN with the printer enable this (see host_vars).
+printer_relay_enabled: false
+
+printer_relay_image: "printer-relay:latest"
+printer_relay_dir: "/opt/printer-relay"
+
+# Office label printer used by PPNAM Station 1 (TSC ML241P, raw TSPL on 9100)
+printer_relay_printer_host: "192.168.1.45"
+printer_relay_printer_port: 9100
+
+# Listen on the server's Tailscale address only, so the printer is reachable
+# from tailnet devices but not re-exposed on the LAN or the internet.
+printer_relay_listen_host: "100.102.46.89"
+printer_relay_listen_port: 9100
+
+# Tailscale CGNAT range; clients outside it are dropped before forwarding
+printer_relay_allowed_clients: "100.64.0.0/10"
+
+printer_relay_check_interval: 5
+printer_relay_connect_timeout: 3
+printer_relay_idle_timeout: 60

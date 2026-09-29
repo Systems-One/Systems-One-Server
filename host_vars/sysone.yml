@@ -122,3 +122,7 @@ scan_fleet_dashboard_port: 8092
 
 # s1_monitor runs on 8093 until the cutover PR retires marketing_display and frees 8090.
 s1_monitor_port: 8093
+
+# Relay PPNAM Station 1 label jobs over Tailscale to the office TSC ML241P
+# (Station 1 printer setting: 100.102.46.89 port 9100).
+printer_relay_enabled: true
