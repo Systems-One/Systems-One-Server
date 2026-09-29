@@ -15,7 +15,7 @@
     mode: "0644"
   loop:
     - { src: Dockerfile, dest: Dockerfile }
-    - { src: app/relay.py, dest: app/relay.py }
+    - { src: app/, dest: app/ }
   notify: restart printer-relay
 
 - name: Render docker-compose file
