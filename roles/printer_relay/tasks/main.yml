@@ -1,0 +1,35 @@
+- name: Ensure printer-relay directory exists
+  file:
+    path: "{{ printer_relay_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Copy relay source
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ printer_relay_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: Dockerfile, dest: Dockerfile }
+    - { src: app/relay.py, dest: app/relay.py }
+  notify: restart printer-relay
+
+- name: Render docker-compose file
+  template:
+    src: docker-compose.printer_relay.yml.j2
+    dest: "{{ printer_relay_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart printer-relay
+
+- name: Build and start printer-relay container
+  command: docker compose up -d --build
+  args:
+    chdir: "{{ printer_relay_dir }}"
+  register: printer_relay_compose
+  changed_when: "'Started' in printer_relay_compose.stderr or 'Recreated' in printer_relay_compose.stderr"

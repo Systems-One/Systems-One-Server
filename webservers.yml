@@ -43,3 +43,6 @@
       tags: [s1_monitor]
     - role: s1_baselines
       tags: [s1_baselines]
+    - role: printer_relay
+      tags: [printer_relay]
+      when: printer_relay_enabled | default(false)

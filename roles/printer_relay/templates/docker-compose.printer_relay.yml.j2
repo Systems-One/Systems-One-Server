@@ -1,0 +1,26 @@
+services:
+  printer-relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: "{{ printer_relay_image }}"
+    container_name: printer_relay
+    restart: unless-stopped
+    # Host networking is required: with published ports, docker-proxy accepts
+    # connections even while the relay has closed its listener, which would
+    # make an offline printer look online to Station 1.
+    network_mode: host
+    environment:
+      LISTEN_HOST: "{{ printer_relay_listen_host }}"
+      LISTEN_PORT: "{{ printer_relay_listen_port }}"
+      PRINTER_HOST: "{{ printer_relay_printer_host }}"
+      PRINTER_PORT: "{{ printer_relay_printer_port }}"
+      ALLOWED_CLIENTS: "{{ printer_relay_allowed_clients }}"
+      CHECK_INTERVAL: "{{ printer_relay_check_interval }}"
+      CONNECT_TIMEOUT: "{{ printer_relay_connect_timeout }}"
+      IDLE_TIMEOUT: "{{ printer_relay_idle_timeout }}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -59,6 +59,10 @@ jobs:
           pip install -r roles/s1_monitor/tests/requirements-dev.txt pyodbc==5.2.0
           python -m pytest roles/s1_monitor/tests -q
 
+      - name: Run printer_relay unit tests
+        timeout-minutes: 3
+        run: python -m unittest discover -s roles/printer_relay/tests
+
       - name: Create placeholder vault password file
         run: echo "ci-placeholder" > .vault_pass
 
