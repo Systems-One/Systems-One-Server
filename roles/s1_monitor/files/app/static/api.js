@@ -75,17 +75,38 @@ function spark(vals, opts={}){ // inline svg sparkline, vals: [{y,low}]
 const DL_ICON='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 const slug = x => String(x).replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'');
 function stamp(){ const d=new Date(sast(NOW.getTime())); return d.getUTCFullYear()+pad(d.getUTCMonth()+1)+pad(d.getUTCDate())+'-'+pad(d.getUTCHours())+pad(d.getUTCMinutes()); }
-/* meta: {title, sub, name:[parts...]} -> renders header text above the chart into one PNG */
+/* meta: {title, sub, name:[parts...], legend?:[{col,name,n,pct}|{note}]} -> renders header text above the chart into one PNG.
+   The canvas grows to fit the header and the optional legend, so a narrow chart (the doughnut) never clips its title. */
 function attachDownload(hostEl, chart, meta){
   if(!hostEl) return;
   const btn=document.createElement('button'); btn.className='dl'; btn.title='Download as image'; btn.innerHTML=DL_ICON;
   const slot=hostEl.querySelector('.ptr')||hostEl.querySelector('.pt')||hostEl.querySelector('.t'); (slot||hostEl).appendChild(btn);
   btn.onclick=e=>{ e.stopPropagation(); const pr=2; const src=chart.getDataURL({pixelRatio:pr,backgroundColor:C.panel});
-    const img=new Image(); img.onload=()=>{ const head=(meta.sub?76:56)*pr, padx=16*pr; const cv=document.createElement('canvas'); cv.width=img.width; cv.height=img.height+head; const g=cv.getContext('2d');
-      g.fillStyle=C.panel; g.fillRect(0,0,cv.width,cv.height); g.fillStyle=C.ink; g.font='600 '+(15*pr)+'px Inter, system-ui, sans-serif'; g.fillText(meta.title,padx,26*pr);
-      g.fillStyle=C.ink2; g.font=(11*pr)+'px Inter, system-ui, sans-serif'; if(meta.sub) g.fillText(meta.sub,padx,46*pr);
-      g.fillText('S1 Remote Monitoring · '+fmt(NOW.getTime())+' SAST',padx,(meta.sub?66:46)*pr);
-      g.drawImage(img,0,head); const a=document.createElement('a'); a.download='S1_'+meta.name.map(slug).filter(Boolean).join('_')+'_'+stamp()+'.png'; a.href=cv.toDataURL('image/png'); a.click(); };
+    const img=new Image(); img.onload=()=>{
+      const head=(meta.sub?76:56)*pr, padx=16*pr, font=(w,s)=>(w?w+' ':'')+(s*pr)+'px Inter, system-ui, sans-serif';
+      const cv=document.createElement('canvas'); const g=cv.getContext('2d');
+      const tw=(f,s)=>{ g.font=f; return g.measureText(s).width; };
+      const stampLine='S1 Remote Monitoring · '+fmt(NOW.getTime())+' SAST';
+      const headW=Math.max(tw(font(600,15),meta.title),meta.sub?tw(font('',11),meta.sub):0,tw(font('',11),stampLine))+padx*2;
+      // legend, laid out as on the page: swatch + name, count, percent; note rows span all three columns
+      const L=meta.legend||[], rowH=22*pr, sw=10*pr, gap=16*pr, legPad=12*pr, fN=font('',13), fB=font(600,13);
+      const rows=L.filter(r=>!r.note), nameW=Math.max(0,...rows.map(r=>tw(fN,r.name)))+sw+8*pr, nW=Math.max(0,...rows.map(r=>tw(fN,r.n))), pW=Math.max(0,...rows.map(r=>tw(fB,r.pct)));
+      const noteW=Math.max(0,...L.filter(r=>r.note).map(r=>tw(fN,r.note)));
+      const legW=L.length?Math.max(nameW+gap+nW+gap+pW,noteW)+padx:0, legH=L.length*rowH;
+      const bodyW=img.width+(L.length?legPad+legW:0), bodyH=Math.max(img.height,legH);
+      cv.width=Math.ceil(Math.max(bodyW,headW)); cv.height=head+bodyH+(L.length?8*pr:0);
+      g.fillStyle=C.panel; g.fillRect(0,0,cv.width,cv.height); g.fillStyle=C.ink; g.font=font(600,15); g.fillText(meta.title,padx,26*pr);
+      g.fillStyle=C.ink2; g.font=font('',11); if(meta.sub) g.fillText(meta.sub,padx,46*pr);
+      g.fillText(stampLine,padx,(meta.sub?66:46)*pr);
+      const x0=L.length?0:Math.floor((cv.width-img.width)/2); g.drawImage(img,x0,head+Math.floor((bodyH-img.height)/2));
+      if(L.length){ const lx=img.width+legPad, ly=head+Math.floor((bodyH-legH)/2), xN=lx+nameW+gap+nW, xP=xN+gap+pW;
+        L.forEach((r,i)=>{ const y=ly+i*rowH, by=y+15*pr;
+          if(r.note){ g.fillStyle=C.ink3; g.font=fN; g.textAlign='left'; g.fillText(r.note,lx,by); return; }
+          g.fillStyle=r.col; g.fillRect(lx,y+6*pr,sw,sw);
+          g.fillStyle=C.ink; g.font=fN; g.textAlign='left'; g.fillText(r.name,lx+sw+8*pr,by);
+          g.textAlign='right'; g.fillText(r.n,xN,by); g.font=fB; g.fillText(r.pct,xP,by); });
+        g.textAlign='left'; }
+      const a=document.createElement('a'); a.download='S1_'+meta.name.map(slug).filter(Boolean).join('_')+'_'+stamp()+'.png'; a.href=cv.toDataURL('image/png'); a.click(); };
     img.src=src; };
 }
 
