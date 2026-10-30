@@ -81,8 +81,10 @@ function attachDownload(hostEl, chart, meta){
   if(!hostEl) return;
   const btn=document.createElement('button'); btn.className='dl'; btn.title='Download as image'; btn.innerHTML=DL_ICON;
   const slot=hostEl.querySelector('.ptr')||hostEl.querySelector('.pt')||hostEl.querySelector('.t'); (slot||hostEl).appendChild(btn);
-  btn.onclick=e=>{ e.stopPropagation(); const pr=2; const src=chart.getDataURL({pixelRatio:pr,backgroundColor:C.panel});
-    const img=new Image(); img.onload=()=>{
+  btn.onclick=e=>{ e.stopPropagation(); const pr=2;
+    /* everything from here to deliver() is synchronous: iOS only opens the share sheet inside the tap, so no Image load may sit in between */
+    const img=chart.renderToCanvas({pixelRatio:pr,backgroundColor:C.panel});
+    {
       const head=(meta.sub?76:56)*pr, padx=16*pr, font=(w,s)=>(w?w+' ':'')+(s*pr)+'px Inter, system-ui, sans-serif';
       const cv=document.createElement('canvas'); const g=cv.getContext('2d');
       const tw=(f,s)=>{ g.font=f; return g.measureText(s).width; };
@@ -106,8 +108,17 @@ function attachDownload(hostEl, chart, meta){
           g.fillStyle=C.ink; g.font=fN; g.textAlign='left'; g.fillText(r.name,lx+sw+8*pr,by);
           g.textAlign='right'; g.fillText(r.n,xN,by); g.font=fB; g.fillText(r.pct,xP,by); });
         g.textAlign='left'; }
-      const a=document.createElement('a'); a.download='S1_'+meta.name.map(slug).filter(Boolean).join('_')+'_'+stamp()+'.png'; a.href=cv.toDataURL('image/png'); a.click(); };
-    img.src=src; };
+      deliver(cv,'S1_'+meta.name.map(slug).filter(Boolean).join('_')+'_'+stamp()+'.png',meta.title);
+    } };
+}
+/* iPhone and iPad Safari ignore a link's download attribute, so there the PNG goes to the share sheet (Save Image, AirDrop, Teams).
+   Everywhere else a blob link downloads it; blob URLs are honoured where data URLs are not. */
+const isIOS=()=>/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+function pngFile(cv,name){ const b=atob(cv.toDataURL('image/png').split(',')[1]); const u=new Uint8Array(b.length); for(let i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return new File([u],name,{type:'image/png'}); }
+function deliver(cv,name,title){
+  const file=pngFile(cv,name);
+  if(isIOS()&&navigator.canShare&&navigator.canShare({files:[file]})){ navigator.share({files:[file],title}).catch(()=>{}); return; }
+  const url=URL.createObjectURL(file); const a=document.createElement('a'); a.download=name; a.href=url; a.click(); setTimeout(()=>URL.revokeObjectURL(url),60000);
 }
 
 /* ---------- echarts theme ---------- */
