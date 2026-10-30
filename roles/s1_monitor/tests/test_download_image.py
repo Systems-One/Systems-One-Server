@@ -45,3 +45,34 @@ def test_legend_rows_are_drawn_beside_the_chart():
     assert drawn["Good read"]["x"] >= img["x"] + img["w"], "legend sits to the right of the doughnut"
     assert drawn["Good read"]["y"] > 76 * PR, "legend starts below the header"
     assert drawn["No read"]["y"] > drawn["Good read"]["y"]
+
+
+# ---- delivery: iPhone gets the share sheet (Save Image), everything else a blob download ----
+IOS = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile Safari/604.1"
+BASE = {"title": "DIM5 @ JBH · Errors, last 48 hours", "sub": "PEPKOR", "name": ["PEPKOR", "JBH", "DIM5", "errors", "48h"], "imgW": 460, "imgH": 460}
+
+def test_iphone_uses_the_share_sheet_with_a_png_file():
+    calls = export(dict(BASE, ua=IOS, canShare=True))
+    share = [c for c in calls if c["op"] == "share"]
+    assert len(share) == 1 and share[0]["files"] == 1 and share[0]["type"] == "image/png"
+    assert share[0]["name"].startswith("S1_PEPKOR_JBH_DIM5_errors_48h_") and share[0]["name"].endswith(".png")
+    assert not [c for c in calls if c["op"] == "click"], "no hidden-link download on iOS"
+
+def test_desktop_downloads_a_blob_url_not_a_data_url():
+    calls = export(dict(BASE, canShare=True))   # desktop Chrome can share files too, but must still download
+    click = [c for c in calls if c["op"] == "click"]
+    assert len(click) == 1 and click[0]["href"] == "blob:" and click[0]["download"].endswith(".png")
+    assert not [c for c in calls if c["op"] == "share"]
+
+def test_iphone_without_file_sharing_falls_back_to_download():
+    calls = export(dict(BASE, ua=IOS, canShare=False))
+    assert [c for c in calls if c["op"] == "click"] and not [c for c in calls if c["op"] == "share"]
+
+def test_ipad_reporting_as_mac_is_treated_as_ios():
+    calls = export(dict(BASE, ua="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15", platform="MacIntel", touch=5, canShare=True))
+    assert [c for c in calls if c["op"] == "share"]
+
+def test_export_is_synchronous_with_the_tap():
+    """iOS only opens the share sheet inside the user gesture, so nothing may wait for an Image load first."""
+    calls = export(dict(BASE, ua=IOS, canShare=True))
+    assert calls and calls[-1]["op"] == "share"
