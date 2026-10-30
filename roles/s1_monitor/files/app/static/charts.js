@@ -67,7 +67,10 @@ function drawFigures(d,S,cmp,host){
   // doughnut
   const cd=echarts.init(document.getElementById('figDonut')); charts.push(cd);
   const who=[d.customer,d.location,d.machine_name];
-  attachDownload(document.getElementById('figDonutBox'),cd,{title:label(d)+' · Errors, last '+rangeName,sub:d.customer+' · '+num(tot.items||0)+' items',name:who.concat(['errors',RG])});
+  const legendRows=slices.map(k=>({col:k.col,name:k.name,n:num(k.value),pct:fpct(pct(k.value,tot.items||0))}))
+    .concat([{note:'Also flagged, can overlap with the above'}],flags.map(k=>({col:k.col,name:k.name,n:num(tot[k.k]||0),pct:fpct(pct(tot[k.k]||0,tot.items||0))})),
+      notMeasured.length?[{note:'Not measured on this machine: '+notMeasured.join(', ')+'.'}]:[]);
+  attachDownload(document.getElementById('figDonutBox'),cd,{title:label(d)+' · Errors, last '+rangeName,sub:d.customer+' · '+num(tot.items||0)+' items',name:who.concat(['errors',RG]),legend:legendRows});
   cd.setOption({animation:false,tooltip:Object.assign({trigger:'item',formatter:p=>'<b>'+num(p.value)+'</b> '+p.name+'<br>'+fpct(pct(p.value,tot.items||0))+' of items'},TIP),
     series:[{type:'pie',radius:['58%','82%'],center:['50%','50%'],label:{show:false},itemStyle:{borderColor:C.panel,borderWidth:2},data:slices.map(k=>({name:k.name,value:k.value,itemStyle:{color:k.col}}))}],
     graphic:[{type:'text',left:'center',top:'40%',style:{text:fpct(pct(tot.good_read||0,tot.items||0)),fill:C.ink,fontSize:22,fontWeight:600,fontFamily:'Inter',textAlign:'center'}},{type:'text',left:'center',top:'56%',style:{text:'good read',fill:C.ink2,fontSize:12,fontFamily:'Inter',textAlign:'center'}}]});
