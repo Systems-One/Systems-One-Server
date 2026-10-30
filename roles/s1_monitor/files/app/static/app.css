@@ -199,9 +199,13 @@ table.legend .sw{width:10px;height:10px;border-radius:2px;flex:none}
   .tile{padding:12px 14px;min-height:84px}
   .tile .v{font-size:26px}
   .tile .v.s{font-size:20px}
-  table.dev,table.wow,table.summary{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+  /* fleet table: keep device, state, items today and good read today; the rest is a tap away on the device page */
+  table.dev th:nth-child(3),table.dev td:nth-child(3),table.dev th:nth-child(n+6),table.dev td:nth-child(n+6){display:none}
+  table.dev .name small{display:block;margin-left:0}
   table.dev td,table.wow td{font-size:13px}
-  table.dev td{padding:11px 10px}
+  table.dev th{padding:10px 5px}
+  table.dev td{padding:11px 5px}
+  table.dev .big{font-size:14px}
   .grid2,.grid3,.multiples{grid-template-columns:1fr}
   .devhead{flex-direction:column}
   .devhead .id{min-width:0;width:100%;border-right:0;border-bottom:1px solid var(--line);padding:12px 14px}
@@ -212,7 +216,9 @@ table.legend .sw{width:10px;height:10px;border-radius:2px;flex:none}
   .cmp .menu{max-width:calc(100vw - 24px);min-width:0;left:0}
   .cmp .menu label{white-space:normal}
   .sumgrid{grid-template-columns:minmax(0,1fr)}
-  .donutwrap{grid-template-columns:1fr}
+  .donutwrap{grid-template-columns:minmax(0,1fr)}
+  table.legend td:first-child{white-space:normal}
+  table.legend td[colspan]{display:table-cell}   /* the flex cell above ignores colspan and wraps the note */
   .donutwrap .c{height:200px}
   .fig .c{height:220px !important}
   .fig .c[style*="200px"]{height:180px !important}

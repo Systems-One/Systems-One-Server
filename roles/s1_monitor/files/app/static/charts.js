@@ -3,6 +3,8 @@
 
 const RANGES={'24h':{hours:24,bucket:30*60e3,label:'30 min'},'48h':{hours:48,bucket:3600e3,label:'hour'},'7d':{days:7},'30d':{days:30},'90d':{days:90}};
 const CMPCOL=['#d95926','#199e70','#c98500','#d55181','#9085e9','#e66767'];   // categorical slots 2..7, primary device keeps blue
+/* under 600px of chart width the dense labels do not fit; drawHeat and drawHost thin them out */
+const narrow=el=>!!el&&el.clientWidth>0&&el.clientWidth<600;
 const SLICE_COL={'Good read':'rgba(57,135,229,.35)','No read, recovered by hand scan':'#d55181','No read, not recovered':'#e66767','No read':'#e66767'};
 
 /* the server's buckets[] in the shape the figures want: shifted x, flattened rates, window edges */
@@ -146,13 +148,14 @@ function drawHeat(d,S,host){
     else if(key<nowS) nodata.push([hh,di,1]); } });
   const c4=echarts.init(el); charts.push(c4); HEAT_CHART=c4;
   const vmax=isPct?100:maxV;
-  c4.setOption({useUTC:true,animation:false,textStyle:{fontFamily:'Inter'},grid:{left:96,right:70,top:26,bottom:8},
-    xAxis:{type:'category',position:'top',data:[...Array(24).keys()].map(x=>pad(x)+':00'),axisLabel:{color:C.ink2,fontSize:10,interval:0},axisLine:{show:false},axisTick:{show:false}},
-    yAxis:{type:'category',data:dates.map(x=>fmtS(x,R.days<=7?'day':'date')),inverse:true,axisLabel:{color:C.ink2,fontSize:10,interval:0},axisLine:{show:false},axisTick:{show:false}},
-    visualMap:{seriesIndex:0,min:0,max:vmax,calculable:false,orient:'vertical',right:8,top:26,itemHeight:140,textStyle:{color:C.ink2,fontSize:10},inRange:{color:['#1c2533','#1c3a66','#1c5cab','#2a78d6','#3987e5','#5598e7','#86b6ef']},text:[isPct?'100%':num(maxV),'0']},
+  const nar=narrow(el);   // phone: cells are too small for labels, so show every sixth hour and no cell text
+  c4.setOption({useUTC:true,animation:false,textStyle:{fontFamily:'Inter'},grid:{left:nar?66:96,right:nar?46:70,top:26,bottom:8},
+    xAxis:{type:'category',position:'top',data:[...Array(24).keys()].map(x=>pad(x)+':00'),axisLabel:{color:C.ink2,fontSize:10,interval:nar?5:0},axisLine:{show:false},axisTick:{show:false}},
+    yAxis:{type:'category',data:dates.map(x=>fmtS(x,R.days<=7?'day':'date')),inverse:true,axisLabel:{color:C.ink2,fontSize:10,interval:nar?'auto':0},axisLine:{show:false},axisTick:{show:false}},
+    visualMap:{seriesIndex:0,min:0,max:vmax,calculable:false,orient:'vertical',right:nar?0:8,top:26,itemHeight:nar?100:140,textStyle:{color:C.ink2,fontSize:10},inRange:{color:['#1c2533','#1c3a66','#1c5cab','#2a78d6','#3987e5','#5598e7','#86b6ef']},text:[isPct?'100%':num(maxV),'0']},
     tooltip:Object.assign({trigger:'item',formatter:p=>{ if(p.seriesName==='nodata') return '<b>No data received</b><br>'+fmtS(dates[p.value[1]],'day')+' '+pad(p.value[0])+':00';
       return '<b>'+(isPct?p.value[2].toFixed(1)+'% '+m.name.replace(' %','').toLowerCase():num(p.value[2])+' items')+'</b>'+(isPct?'<br>'+num(p.value[3])+' items'+(p.value[3]<MIN_HOUR?' (under '+MIN_HOUR+', rate not trusted)':''):'')+'<br>'+fmtS(dates[p.value[1]],'day')+' '+pad(p.value[0])+':00 to '+pad(p.value[0]+1)+':00';}},TIP),
-    series:[{name:'v',type:'heatmap',data:cells,label:{show:true,fontSize:10,fontFamily:'Inter',color:C.ink,formatter:p=>isPct?Math.round(p.value[2])+'%':(p.value[2]>0?p.value[2]:'')},itemStyle:{borderColor:C.panel,borderWidth:1},emphasis:{itemStyle:{borderColor:C.ink,borderWidth:1}}},
+    series:[{name:'v',type:'heatmap',data:cells,label:{show:!nar,fontSize:10,fontFamily:'Inter',color:C.ink,formatter:p=>isPct?Math.round(p.value[2])+'%':(p.value[2]>0?p.value[2]:'')},itemStyle:{borderColor:C.panel,borderWidth:1},emphasis:{itemStyle:{borderColor:C.ink,borderWidth:1}}},
       {name:'nodata',type:'heatmap',data:nodata,itemStyle:{color:'rgba(208,59,59,.45)',borderColor:C.panel,borderWidth:1},label:{show:false}}]});
   attachDownload((host||document).querySelector('#figHeatBox'),c4,{title:label(d)+' · '+m.name+' heatmap, last '+R.days+' days',sub:d.customer+' · date by hour of day',name:[d.customer,d.location,d.machine_name,m.name+' heatmap',RG]});
 }
@@ -164,16 +167,17 @@ function drawHost(d,H,host){
   box.innerHTML='<div class="pt"><b>Host history</b><span class="ptr">C: drive, memory, CPU, temperature · markers: app stop/start, reboot</span></div><div class="c" id="figHost" style="height:260px"></div>';
   host.appendChild(box);
   const ch=echarts.init(document.getElementById('figHost')); charts.push(ch);
+  const nar=narrow(document.getElementById('figHost'));   // phone: legend wraps to two rows, event labels would pile up
   const xs=H.rows.map(r=>sast(t(r.ts)));
   const series=[['c_usage_percent','C: drive %',C.info],['mem_usage_pct','Memory %','#199e70'],['cpu_percent','CPU %','#c98500'],['temp_celsius','Temperature °C','#d55181']]
     .map(([k,name,col])=>({name,type:'line',data:H.rows.map((r,i)=>[xs[i],r[k]]),symbol:'none',lineStyle:{width:1.5,color:col},itemStyle:{color:col}}));
-  const marks=(H.events||[]).map(e=>({xAxis:sast(t(e.ts)),lineStyle:{color:e.kind==='app_stopped'?C.bad:e.kind==='uptime_reset'?C.warn:C.ink3,type:'dashed',width:1},label:{show:true,formatter:e.kind.replace('_',' '),color:C.ink2,fontSize:10,position:'insideEndTop'}}));
+  const marks=(H.events||[]).map(e=>({xAxis:sast(t(e.ts)),lineStyle:{color:e.kind==='app_stopped'?C.bad:e.kind==='uptime_reset'?C.warn:C.ink3,type:'dashed',width:1},label:{show:!nar,formatter:e.kind.replace('_',' '),color:C.ink2,fontSize:10,position:'insideEndTop'}}));
   series[0].markLine={silent:true,symbol:'none',animation:false,data:marks};
   const lim=d.storage_limits||{};
   if(lim.warn) series[0].markLine.data.push(dashed(Number(lim.warn),C.warn,'C: warn '+lim.warn+'%','insideStartTop'));
   if(lim.bad) series[0].markLine.data.push(dashed(Number(lim.bad),C.bad,'C: bad '+lim.bad+'%','insideStartBottom'));
-  ch.setOption(Object.assign(base(),{legend:{top:0,right:8,textStyle:{color:C.ink2,fontFamily:'Inter'},icon:'rect',itemWidth:10,itemHeight:10},
-    grid:{left:60,right:20,top:30,bottom:30},
+  ch.setOption(Object.assign(base(),{legend:Object.assign({top:0,textStyle:{color:C.ink2,fontFamily:'Inter'},icon:'rect',itemWidth:10,itemHeight:10},nar?{left:4,right:4}:{right:8}),
+    grid:{left:nar?40:60,right:nar?12:20,top:nar?58:30,bottom:30},
     xAxis:{type:'time',min:xs[0],max:xs[xs.length-1],axisLabel:{color:C.ink2,hideOverlap:true,formatter:v=>fmtS(v)},axisLine:{lineStyle:{color:C.line}},axisTick:{show:false},splitLine:{show:false}},
     yAxis:Object.assign({},AX,{type:'value',min:0,max:100,interval:20,axisLabel:{color:C.ink2}}),
     tooltip:Object.assign({trigger:'axis',formatter:ps=>'<div style="color:'+C.ink2+'">'+fmtS(ps[0].value[0])+'</div>'+ps.map(p=>'<div><b>'+(p.value[1]==null?'–':p.value[1])+'</b> <span style="color:'+C.ink2+'">'+p.seriesName+'</span></div>').join('')},TIP),
