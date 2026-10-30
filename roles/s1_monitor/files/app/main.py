@@ -1,14 +1,16 @@
 """s1_monitor API and static site."""
 import asyncio
 import datetime as dt
+import hashlib
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import db
@@ -158,7 +160,25 @@ async def api_device_health(device_id: int, range: str = "30d"):
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+def static_version(static_dir: str = STATIC_DIR) -> str:
+    """Short hash of every file under static/. The index references its scripts with ?v=<hash>,
+    so each deploy gets new URLs and Cloudflare's edge cache of /static/*.js cannot serve the previous build."""
+    h = hashlib.sha256()
+    for root, _, files in sorted(os.walk(static_dir)):
+        for name in sorted(files):
+            path = os.path.join(root, name)
+            h.update(os.path.relpath(path, static_dir).replace(os.sep, "/").encode())
+            with open(path, "rb") as f:
+                h.update(f.read())
+    return h.hexdigest()[:12]
+
+
+STATIC_VERSION = static_version()
+_STATIC_REF = re.compile(r'((?:src|href)="/static/[^"?]+)(")')
+
+
 @app.get("/")
 async def index():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"),
-                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+    with open(os.path.join(STATIC_DIR, "index.html"), encoding="utf-8") as f:
+        html = _STATIC_REF.sub(lambda m: m.group(1) + "?v=" + STATIC_VERSION + m.group(2), f.read())
+    return HTMLResponse(html, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
