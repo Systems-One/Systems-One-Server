@@ -1,6 +1,9 @@
 /* Routing, the needs-attention bell and the Fleet page. Loaded after api.js and charts.js. */
 const main=document.getElementById('main');
 let CUST=''; const charts=[]; function dispose(){ while(charts.length) charts.pop().dispose(); HEAT_CHART=null; }
+/* The old page stays up while a fetch is pending. Once data is in, dispose + repaint happen in one synchronous
+   step (no await), so the browser never paints a blank frame; scroll is put back so a poll does not jump. */
+function swap(h){ const y=window.scrollY; dispose(); main.innerHTML=h; window.scrollTo(0,y); }
 const RANGE_KEYS=['24h','48h','7d','30d','90d'];
 let RANGE='90d', COMPARE=[], CMP_OPEN=false, BELL_OPEN=false, ATTENTION=[];
 let METRIC='good_read_pct', TWIN=30, TSUB='tiles';
@@ -24,14 +27,15 @@ async function boot(){
   document.addEventListener('click',()=>{ if(CMP_OPEN){ CMP_OPEN=false; const m=document.getElementById('cmpmenu'); if(m) m.hidden=true; } });
   window.addEventListener('hashchange',render);
   window.addEventListener('resize',()=>charts.forEach(c=>c.resize()));
-  setInterval(()=>{ if(!document.hidden) render(); },60000);
+  setInterval(()=>{ if(!document.hidden) render({bg:true}); },60000);
   render();
 }
 
-async function render(){
+/* opts.bg marks the 60 s poll: on failure it leaves the page as it is. hashchange passes an Event, hence the strict check. */
+async function render(opts){
+  const bg=!!opts&&opts.bg===true;
   const my=++RENDER_SEQ;
   const hash=location.hash||'#fleet';
-  dispose();
   if(hash!==LAST_HASH){ window.scrollTo(0,0); LAST_HASH=hash; }
   const [route,arg,arg2,arg3]=hash.slice(1).split('/');
   if(route==='device'){
@@ -40,7 +44,7 @@ async function render(){
   }
   document.querySelectorAll('[data-nav]').forEach(a=>a.classList.toggle('on',a.dataset.nav===route));
   try{ await ({fleet:renderFleet,device:renderDevice,trends:renderTrends}[route]||renderFleet)(arg,my); }
-  catch(e){ if(my!==RENDER_SEQ) return; errorPanel(main,e); }
+  catch(e){ if(my!==RENDER_SEQ) return; if(!bg) errorPanel(main,e); }
   if(my!==RENDER_SEQ) return;
   setClock();
   renderBell();
@@ -118,7 +122,7 @@ async function renderFleet(arg,my){
       +'<td>'+(d.app_running==null?'–':d.app_running?'<span class="dot good"></span> running':'<span class="dot bad"></span> stopped')+'</td></tr>';
   }
   h+='</tbody></table>';
-  main.innerHTML=h;
+  swap(h);
   main.querySelectorAll('table.dev tr.d').forEach(r=>r.onclick=()=>{ location.hash='device/'+r.dataset.id; });
 }
 
@@ -136,7 +140,7 @@ async function renderDevice(arg,my){
   try{ d=await API.get('/api/device/'+id); }
   catch(e){
     if(my!==RENDER_SEQ) return;
-    if(e&&e.status===404){ main.innerHTML='<h1>Device</h1><div class="notice">Unknown device</div>'; return; }
+    if(e&&e.status===404){ swap('<h1>Device</h1><div class="notice">Unknown device</div>'); return; }
     throw e;   // 503 and the rest land in render()'s errorPanel
   }
   if(my!==RENDER_SEQ) return;
@@ -175,7 +179,7 @@ async function renderDevice(arg,my){
     +cmp.map((k,i)=>'<span class="chip"><span class="sw" style="background:'+CMPCOL[i%CMPCOL.length]+'"></span>'+esc(label(k.d))+' <span class="faint">'+esc(k.d.customer)+'</span><button data-rm="'+k.d.id+'" title="Remove">×</button></span>').join('')
     +'<span class="hint">'+(S.style==='line'?'One point per day, in SAST.':'Bars per '+((RANGES[S.range]||{}).label||'bucket')+', in SAST.')+' Hover for the numbers.</span></div>';
   h+='<div id="devbody"></div>';
-  main.innerHTML=h;
+  swap(h);
   document.getElementById('devsel').onchange=e=>{ COMPARE=[]; location.hash='device/'+e.target.value+'/'+RANGE; };
   main.querySelectorAll('#rng button,#rng2 button').forEach(b=>b.onclick=()=>{ RANGE=b.dataset.r; goDevice(id); });
   document.getElementById('cmpbtn').onclick=e=>{ e.stopPropagation(); CMP_OPEN=!CMP_OPEN; document.getElementById('cmpmenu').hidden=!CMP_OPEN; };
@@ -219,7 +223,7 @@ async function renderTrends(arg,my){
     +(R.hidden?'<span class="hint">'+R.hidden+' devices hidden: metric does not apply to their customer</span>':'')+'</div>';
   if(TSUB==='tiles') h+='<div class="multiples">'+ds.map(d=>'<div class="mini" id="miniBox'+d.id+'"><div class="t"><b>'+esc(label(d))+'</b><span style="margin-left:auto">'+esc(d.customer)+'</span></div><div class="c" id="mini'+d.id+'"></div></div>').join('')+'</div>';
   if(TSUB==='table') h+='<table class="wow"><thead><tr><th>Device</th><th class="r">This week</th><th class="r">Median of previous 4</th><th class="r">Change</th><th>Last 5 weeks</th></tr></thead><tbody id="wowbody"></tbody></table>';
-  main.innerHTML=h;
+  swap(h);
   document.getElementById('msel').onchange=e=>{ METRIC=e.target.value; render(); };
   main.querySelectorAll('.subnav a').forEach(a=>a.onclick=()=>{ goTrends(a.dataset.sub); });
   main.querySelectorAll('#twin button').forEach(b=>b.onclick=()=>{ TWIN=Number(b.dataset.w); render(); });

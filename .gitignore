@@ -35,3 +35,6 @@ secrets.yml
 
 # s1_monitor workstation secrets
 .env
+
+# Personal Claude Code settings
+.claude/settings.local.json

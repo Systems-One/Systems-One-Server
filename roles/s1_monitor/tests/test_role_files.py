@@ -28,3 +28,14 @@ def test_no_getdate_in_queries():
     for name in os.listdir(qdir):
         if name.endswith(".py"):
             assert not re.search(r"GETDATE\s*\(", read("files", "app", "queries", name), re.I), name
+
+
+def test_css_has_phone_breakpoint():
+    import re
+    from pathlib import Path
+    css = (Path(__file__).resolve().parents[1] / "files" / "app" / "static" / "app.css").read_text(encoding="utf-8")
+    m = re.search(r"@media \(max-width:640px\)\{(.*?)\n\}", css, re.S)
+    assert m, "no @media (max-width:640px) block"
+    block = m.group(1)
+    for sel in (".attnpanel", ".strip", "table.dev", ".donutwrap"):
+        assert sel in block, sel

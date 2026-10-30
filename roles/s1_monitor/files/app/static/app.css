@@ -175,3 +175,53 @@ table.legend .sw{width:10px;height:10px;border-radius:2px;flex:none}
 .subnav{display:inline-flex;gap:4px;margin:0 0 14px}
 .subnav a{padding:7px 14px;border-radius:var(--radius);color:var(--ink-2);border:1px solid var(--line);cursor:pointer}
 .subnav a.on{color:var(--ink);background:var(--panel-2);border-color:var(--line-2)}
+
+/* phone layout (<=640px): desktop rules above are untouched */
+@media (max-width:640px){
+  html,body{overflow-x:hidden}
+  .topbar{flex-wrap:wrap;height:auto;gap:6px 10px;padding:6px 12px}
+  .brand{order:1}
+  .spacer{display:none}
+  .topbar .ctl{order:2;margin-left:auto;min-width:0;flex:0 1 auto}
+  .bell{order:3;height:34px}
+  .nav{order:4;flex:1 0 100%;gap:4px}
+  .nav a{flex:1;text-align:center;min-height:36px;display:flex;align-items:center;justify-content:center;padding:6px 8px}
+  #custsel{max-width:42vw;min-width:0;text-overflow:ellipsis}
+  .banner{padding:6px 12px}
+  /* bottom sheet: a fixed panel with top:auto sits off-screen, and the two-row bar makes a top offset unreliable */
+  .attnpanel{top:auto;bottom:0;left:0;right:0;width:auto;max-height:75vh;border-radius:12px 12px 0 0;box-shadow:0 -10px 40px rgba(0,0,0,.6)}
+  .attnpanel .row{grid-template-columns:18px 1fr auto;gap:2px 10px;padding:10px 12px}
+  .attnpanel .row .val{grid-column:3;grid-row:1;text-align:right}
+  .attnpanel .row .rule{grid-column:2/4;grid-row:2}
+  main{padding:12px 12px 48px}
+  h1{font-size:17px}
+  .strip{grid-template-columns:repeat(2,minmax(0,1fr)) !important}
+  .tile{padding:12px 14px;min-height:84px}
+  .tile .v{font-size:26px}
+  .tile .v.s{font-size:20px}
+  table.dev,table.wow,table.summary{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+  table.dev td,table.wow td{font-size:13px}
+  table.dev td{padding:11px 10px}
+  .grid2,.grid3,.multiples{grid-template-columns:1fr}
+  .devhead{flex-direction:column}
+  .devhead .id{min-width:0;width:100%;border-right:0;border-bottom:1px solid var(--line);padding:12px 14px}
+  .devhead .id h1{font-size:19px}
+  .devhead .kv{grid-template-columns:auto 1fr;border-right:0;border-bottom:1px solid var(--line);padding:10px 14px}
+  .devhead .kv:last-child{border-bottom:0}
+  .toolrow{gap:8px 10px}
+  .cmp .menu{max-width:calc(100vw - 24px);min-width:0;left:0}
+  .cmp .menu label{white-space:normal}
+  .sumgrid{grid-template-columns:minmax(0,1fr)}
+  .donutwrap{grid-template-columns:1fr}
+  .donutwrap .c{height:200px}
+  .fig .c{height:220px !important}
+  .fig .c[style*="200px"]{height:180px !important}
+  .donutwrap .c{height:200px !important}
+  .fig .pt{flex-wrap:wrap}
+  .mini .c{height:160px !important}
+  .subnav{display:flex;flex-wrap:wrap}
+  .seg button,.btn,select.sel{min-height:34px}
+}
+@media (max-width:480px){
+  .clock{display:none}
+}
