@@ -7,10 +7,10 @@ services:
       DB_HOST: "{{ s1_dash_db_host }}"
       DB_PORT: "{{ s1_dash_db_port }}"
       DB_NAME: "{{ s1_dash_db_name }}"
-      DB_USER: "{{ s1_dash_db_user }}"
-      DB_PASS: "{{ s1_dash_db_pass }}"
+      DB_USER: {{ s1_dash_db_user | tojson | replace('$', '$$') }}
+      DB_PASS: {{ s1_dash_db_pass | tojson | replace('$', '$$') }}
       DASH_USERS_FILE: "/run/secrets/users.json"
-      SESSION_SECRET: "{{ s1_dash_session_secret }}"
+      SESSION_SECRET: {{ s1_dash_session_secret | tojson | replace('$', '$$') }}
       SESSION_DAYS: "{{ s1_dash_session_days }}"
       SESSION_SECURE: "{{ 'true' if s1_dash_session_secure else 'false' }}"
       TRUST_PROXY_IP: "{{ 'true' if s1_dash_trust_proxy_ip else 'false' }}"
