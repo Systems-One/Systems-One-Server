@@ -185,7 +185,8 @@ def test_host_vars_secrets_are_vault_refs_and_no_preview_overrides():
     assert hv["s1_dash_ghcr_token"] == "{{ vault_s1_dash_ghcr_token }}"
     assert hv["s1_dash_ghcr_user"] == "Systems-One"
     raw = open(os.path.join(REPO, "host_vars", "sysone.yml"), encoding="utf-8").read()
-    assert "dash.sysone.co.za" in raw and "localhost:8094" in raw
+    assert "dash.sysone.co.za" in raw and "localhost:3000" in raw
+    assert hv["s1_dash_port"] == 3000   # the port Grafana used; the Cloudflare route points at it
 
 
 def test_defaults_render_production_values():
