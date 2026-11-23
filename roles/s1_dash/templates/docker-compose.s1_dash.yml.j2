@@ -1,0 +1,51 @@
+services:
+  s1-dash:
+    image: "{{ s1_dash_image }}:{{ s1_dash_tag }}"
+    container_name: s1_dash
+    restart: unless-stopped
+    environment:
+      DB_HOST: "{{ s1_dash_db_host }}"
+      DB_PORT: "{{ s1_dash_db_port }}"
+      DB_NAME: "{{ s1_dash_db_name }}"
+      DB_USER: {{ s1_dash_db_user | tojson | replace('$', '$$') }}
+      DB_PASS: {{ s1_dash_db_pass | tojson | replace('$', '$$') }}
+      DASH_USERS_FILE: "/run/secrets/users.json"
+      SESSION_SECRET: {{ s1_dash_session_secret | tojson | replace('$', '$$') }}
+      SESSION_DAYS: "{{ s1_dash_session_days }}"
+      SESSION_HOURS: "{{ s1_dash_session_hours }}"
+      SESSION_SECURE: "{{ 'true' if s1_dash_session_secure else 'false' }}"
+      TRUST_PROXY_IP: "{{ 'true' if s1_dash_trust_proxy_ip else 'false' }}"
+      LOGIN_MAX_ATTEMPTS: "{{ s1_dash_login_max_attempts }}"
+      LOGIN_WINDOW_MINUTES: "{{ s1_dash_login_window_minutes }}"
+      TZ_OFFSET_HOURS: "{{ s1_dash_tz_offset_hours }}"
+      MIN_ITEMS_DAY: "{{ s1_dash_min_items_day }}"
+      MIN_ITEMS_HOUR: "{{ s1_dash_min_items_hour }}"
+      MIN_ITEMS_HALF_HOUR: "{{ s1_dash_min_items_half_hour }}"
+      MIN_ITEMS_PACKET: "{{ s1_dash_min_items_packet }}"
+      OFFLINE_GAP_MINUTES: "{{ s1_dash_offline_gap_minutes }}"
+      STALE_DAYS: "{{ s1_dash_stale_days }}"
+      EXPECTED_WEEKS: "{{ s1_dash_expected_weeks }}"
+      QUIET_RATIO: "{{ s1_dash_quiet_ratio }}"
+      FORECAST_DAYS: "{{ s1_dash_forecast_days }}"
+      FORECAST_HORIZON_DAYS: "{{ s1_dash_forecast_horizon_days }}"
+      JOB_INTERVAL_MINUTES: "{{ s1_dash_job_interval_minutes }}"
+      CACHE_TTL_LIVE_SECONDS: "{{ s1_dash_cache_ttl_live }}"
+      CACHE_TTL_HISTORY_SECONDS: "{{ s1_dash_cache_ttl_history }}"
+      QUERY_TIMEOUT_SECONDS: "{{ s1_dash_query_timeout }}"
+      EXPLORER_MAX_POINTS: "{{ s1_dash_explorer_max_points }}"
+    volumes:
+      - "{{ s1_dash_dir }}/users.json:/run/secrets/users.json:ro"
+    ports:
+      - "{{ s1_dash_bind_address }}:{{ s1_dash_port }}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8000/health',timeout=4); sys.exit(0 if r.status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - {{ docker_shared_network | default('infra') }}
+
+networks:
+  {{ docker_shared_network | default('infra') }}:
+    external: true

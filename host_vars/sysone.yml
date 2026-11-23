@@ -126,3 +126,55 @@ s1_monitor_port: 8093
 # Relay PPNAM Station 1 label jobs over Tailscale to the office TSC ML241P
 # (Station 1 printer setting: 100.102.46.89 port 9100).
 printer_relay_enabled: true
+
+# s1_dash (replaces Grafana). PREVIEW values: bound to the box's Tailscale
+# address over plain HTTP so a phone on the tailnet can open
+# http://100.102.46.89:8094. All three overrides revert at cutover (delete these
+# three lines to fall back to the role defaults 127.0.0.1, true and true) in the
+# same PR that moves the Cloudflare route to localhost:8094. trust_proxy_ip is
+# false here because nothing sits in front of the app: a tailnet client could
+# otherwise send its own CF-Connecting-IP and dodge the login throttle.
+s1_dash_bind_address: "100.102.46.89"
+s1_dash_session_secure: false
+s1_dash_trust_proxy_ip: false
+s1_dash_session_secret: "{{ vault_s1_dash_session_secret }}"
+s1_dash_ghcr_user: "Systems-One"
+s1_dash_ghcr_token: "{{ vault_s1_dash_ghcr_token }}"
+s1_dash_users:
+  - login: "jonathan"
+    role: "admin"
+    password: "{{ vault_grafana_jonathan_password }}"
+  - login: "avi"
+    role: "viewer"
+    password: "{{ vault_grafana_avi_password }}"
+  - login: "chris"
+    role: "viewer"
+    password: "{{ vault_grafana_chris_password }}"
+  - login: "pkluser"
+    role: "viewer"
+    customers: ["PEPKOR"]
+    password: "{{ vault_grafana_pkluser_password }}"
+  - login: "cust_bex"
+    role: "viewer"
+    customers: ["BEX"]
+    password: "{{ vault_grafana_cust_bex_password }}"
+  - login: "cust_dcb"
+    role: "viewer"
+    customers: ["DCB"]
+    password: "{{ vault_grafana_cust_dcb_password }}"
+  - login: "cust_madibana"
+    role: "viewer"
+    customers: ["MADIBANA"]
+    password: "{{ vault_grafana_cust_madibana_password }}"
+  - login: "cust_pep"
+    role: "viewer"
+    customers: ["PEP"]
+    password: "{{ vault_grafana_cust_pep_password }}"
+  - login: "cust_pep_africa"
+    role: "viewer"
+    customers: ["PEP AFRICA"]
+    password: "{{ vault_grafana_cust_pep_africa_password }}"
+  - login: "cust_snowsoft"
+    role: "viewer"
+    customers: ["SNOWSOFT"]
+    password: "{{ vault_grafana_cust_snowsoft_password }}"

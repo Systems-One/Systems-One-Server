@@ -1,0 +1,4 @@
+- name: restart s1-dash
+  command: docker compose up -d --force-recreate
+  args:
+    chdir: "{{ s1_dash_dir }}"

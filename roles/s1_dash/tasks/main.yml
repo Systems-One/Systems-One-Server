@@ -1,0 +1,83 @@
+- name: Validate s1_dash session secret
+  assert:
+    that:
+      - s1_dash_session_secret | length >= 32
+    fail_msg: >-
+      s1_dash_session_secret must be at least 32 characters.
+      Set it from vault_s1_dash_session_secret in host_vars.
+  no_log: true
+
+- name: Refuse to trust the client-IP header unless bound to loopback
+  assert:
+    that:
+      - (not s1_dash_trust_proxy_ip) or s1_dash_bind_address in ['127.0.0.1', '::1', 'localhost']
+    fail_msg: >-
+      s1_dash_trust_proxy_ip is true but s1_dash_bind_address is not a
+      loopback address. The client-IP header (CF-Connecting-IP) is only
+      trustworthy behind cloudflared on loopback; on any other bind a client
+      can forge it and evade the login throttle. Set s1_dash_trust_proxy_ip
+      to false or bind to 127.0.0.1.
+
+# The image runs as uid 1001 (appuser). The directory is group-owned by that
+# gid and closed to others; users.json is readable by that uid only.
+- name: Ensure s1-dash directory exists
+  file:
+    path: "{{ s1_dash_dir }}"
+    state: directory
+    owner: root
+    group: "1001"
+    mode: "0750"
+
+- name: Log in to ghcr.io (private image)
+  command: docker login ghcr.io -u {{ s1_dash_ghcr_user }} --password-stdin
+  args:
+    stdin: "{{ s1_dash_ghcr_token }}"
+  when: s1_dash_ghcr_token | length > 0
+  changed_when: false
+  no_log: true
+
+- name: Render users file
+  template:
+    src: users.json.j2
+    dest: "{{ s1_dash_dir }}/users.json"
+    owner: "1001"
+    group: "1001"
+    mode: "0600"
+  no_log: true
+  notify: restart s1-dash
+
+- name: Render docker-compose file
+  template:
+    src: docker-compose.s1_dash.yml.j2
+    dest: "{{ s1_dash_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: restart s1-dash
+
+- name: Record current s1-dash image id
+  command: docker image inspect --format '{% raw %}{{.Id}}{% endraw %}' {{ s1_dash_image }}:{{ s1_dash_tag }}
+  register: s1_dash_image_before
+  changed_when: false
+  failed_when: false
+
+- name: Pull s1-dash image
+  command: docker compose pull
+  args:
+    chdir: "{{ s1_dash_dir }}"
+  changed_when: false
+
+# compose v2 prints "Pulled" even when the image is current, so compare ids.
+- name: Detect whether the pull changed the s1-dash image
+  command: docker image inspect --format '{% raw %}{{.Id}}{% endraw %}' {{ s1_dash_image }}:{{ s1_dash_tag }}
+  register: s1_dash_image_after
+  changed_when: s1_dash_image_after.stdout != s1_dash_image_before.stdout
+  failed_when: false
+
+- name: Start s1-dash container
+  command: docker compose up -d
+  args:
+    chdir: "{{ s1_dash_dir }}"
+  register: s1_dash_compose
+  changed_when: "'Started' in s1_dash_compose.stdout or 'Recreated' in s1_dash_compose.stdout or 'Started' in s1_dash_compose.stderr or 'Recreated' in s1_dash_compose.stderr"

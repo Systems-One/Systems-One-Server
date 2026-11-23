@@ -23,6 +23,13 @@ To edit: `ansible-vault edit group_vars/vault.yml`
 | `vault_grafana_cust_snowsoft_password` | Grafana `cust_snowsoft` (SNOWSOFT customer login) password |
 | `vault_grafana_git_sync_token` | GitHub PAT for Grafana Git Sync (repo: Jwagener1/grafana) |
 | `vault_cloudflare_tunnel_token` | Cloudflare tunnel token |
+| `vault_s1_dash_session_secret` | s1_dash session cookie HMAC key: random, 48+ characters |
+| `vault_s1_dash_ghcr_token` | GitHub PAT with `read:packages`, used to pull the private `ghcr.io/systems-one/s1-dash` image |
+
+s1_dash also reuses the `vault_grafana_<login>_password` variables above for its
+users, so nobody has to learn a new password. The role renders them in
+plaintext into `/opt/s1-dash/users.json` (0600, uid 1001); the app bcrypt-hashes
+them in memory at startup.
 
 Note: a `cust_pepkor` Grafana account also exists on the live server but is
 intentionally left out of Ansible management (not vault-backed, password
