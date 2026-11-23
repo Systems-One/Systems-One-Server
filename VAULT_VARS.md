@@ -25,7 +25,6 @@ To edit: `ansible-vault edit group_vars/vault.yml`
 | `vault_cloudflare_tunnel_token` | Cloudflare tunnel token |
 | `vault_s1_dash_session_secret` | s1_dash session cookie HMAC key: random, 48+ characters |
 | `vault_s1_dash_ghcr_token` | GitHub PAT with `read:packages`, used to pull the private `ghcr.io/systems-one/s1-dash` image |
-| `vault_s1_dash_cust_pepkor_password` | s1_dash `cust_pepkor` (PEPKOR customer login) password. New: the Grafana account was unmanaged |
 
 s1_dash also reuses the `vault_grafana_<login>_password` variables above for its
 users, so nobody has to learn a new password. The role renders them in

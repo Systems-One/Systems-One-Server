@@ -174,10 +174,6 @@ s1_dash_users:
     role: "viewer"
     customers: ["PEP AFRICA"]
     password: "{{ vault_grafana_cust_pep_africa_password }}"
-  - login: "cust_pepkor"
-    role: "viewer"
-    customers: ["PEPKOR"]
-    password: "{{ vault_s1_dash_cust_pepkor_password }}"
   - login: "cust_snowsoft"
     role: "viewer"
     customers: ["SNOWSOFT"]

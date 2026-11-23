@@ -142,7 +142,7 @@ def test_webservers_has_role_with_tag():
     assert names.index("s1_dash") == names.index("s1_monitor") + 1
 
 
-# The spec's "Owner decisions" section says "twelve" but lists eleven logins.
+# The spec lists eleven logins; the owner dropped cust_pepkor on 2026-11-23 (no vault password, never used).
 SPEC_USERS = {
     "jonathan": ("admin", None),
     "avi": ("viewer", None),
@@ -153,7 +153,6 @@ SPEC_USERS = {
     "cust_madibana": ("viewer", ["MADIBANA"]),
     "cust_pep": ("viewer", ["PEP"]),
     "cust_pep_africa": ("viewer", ["PEP AFRICA"]),
-    "cust_pepkor": ("viewer", ["PEPKOR"]),
     "cust_snowsoft": ("viewer", ["SNOWSOFT"]),
 }
 
@@ -166,16 +165,13 @@ def hostvars():
 
 def test_host_vars_users_and_vault_references():
     users = hostvars()["s1_dash_users"]
-    assert len(users) == len(SPEC_USERS) == 11
+    assert len(users) == len(SPEC_USERS) == 10
     assert {u["login"] for u in users} == set(SPEC_USERS)
     for u in users:
         role, customers = SPEC_USERS[u["login"]]
         assert u["role"] == role, u["login"]
         assert u.get("customers") == customers, u["login"]
-        if u["login"] == "cust_pepkor":
-            name = "vault_s1_dash_cust_pepkor_password"
-        else:
-            name = "vault_grafana_%s_password" % u["login"]
+        name = "vault_grafana_%s_password" % u["login"]
         assert u["password"] == "{{ %s }}" % name, u["login"]
 
 
