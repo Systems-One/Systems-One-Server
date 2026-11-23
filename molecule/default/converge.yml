@@ -17,7 +17,6 @@
     grafana_api_provision_enabled: false
     mqtt_username: "testuser"
     mqtt_password: "testpassword"
-    nodered_timezone: "Africa/Johannesburg"
     systems_one_ingest_mqtt_host: "localhost"
     systems_one_ingest_mqtt_port: 1883
     systems_one_ingest_mqtt_username: "testuser"
