@@ -105,13 +105,7 @@ jobs:
             -i production \
             -e "mssql_sa_password=test \
                 mssql_app_login_password=test \
-                grafana_admin_password=test \
-                grafana_jonathan_password=test \
-                grafana_avi_password=test \
-                grafana_chris_password=test \
-                grafana_pkluser_password=test \
                 mqtt_password=test \
-                grafana_git_sync_token=test \
                 cloudflare_tunnel_token=test \
                 backup_b2_account_id=test \
                 backup_b2_account_key=test \

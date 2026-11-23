@@ -10,46 +10,44 @@ To edit: `ansible-vault edit group_vars/vault.yml`
 | `vault_mqtt_username` | Mosquitto broker username (shared by all MQTT clients/devices) |
 | `vault_mqtt_password` | Mosquitto broker password |
 | `vault_mssql_sa_password` | MSSQL SA password |
-| `vault_grafana_admin_password` | Grafana `admin` user password |
-| `vault_grafana_jonathan_password` | Grafana `jonathan` user password |
-| `vault_grafana_avi_password` | Grafana `avi` user password |
-| `vault_grafana_chris_password` | Grafana `chris` user password |
-| `vault_grafana_pkluser_password` | Grafana `pkluser` (PKL User Group) password |
-| `vault_grafana_cust_bex_password` | Grafana `cust_bex` (BEX customer login) password |
-| `vault_grafana_cust_dcb_password` | Grafana `cust_dcb` (DCB customer login) password |
-| `vault_grafana_cust_madibana_password` | Grafana `cust_madibana` (MADIBANA customer login) password |
-| `vault_grafana_cust_pep_password` | Grafana `cust_pep` (PEP customer login) password |
-| `vault_grafana_cust_pep_africa_password` | Grafana `cust_pep_africa` (PEP AFRICA customer login) password |
-| `vault_grafana_cust_snowsoft_password` | Grafana `cust_snowsoft` (SNOWSOFT customer login) password |
-| `vault_grafana_git_sync_token` | GitHub PAT for Grafana Git Sync (repo: Jwagener1/grafana) |
 | `vault_cloudflare_tunnel_token` | Cloudflare tunnel token |
 | `vault_s1_dash_session_secret` | s1_dash session cookie HMAC key: random, 48+ characters |
 | `vault_s1_dash_ghcr_token` | GitHub PAT with `read:packages`, used to pull the private `ghcr.io/systems-one/s1-dash` image |
 
-s1_dash also reuses the `vault_grafana_<login>_password` variables above for its
-users, so nobody has to learn a new password. The role renders them in
-plaintext into `/opt/s1-dash/users.json` (0600, uid 1001); the app bcrypt-hashes
-them in memory at startup.
+## s1_dash logins
 
-Note: a `cust_pepkor` Grafana account also exists on the live server but is
-intentionally left out of Ansible management (not vault-backed, password
-untouched) — see the 2026-08-11 vault rotation for context.
+The names below are historical: they began as Grafana passwords, and Grafana is retired.
+They are now the s1_dash login passwords, read by `s1_dash_users` in
+`host_vars/sysone.yml`. **Do not rename them.** The role renders them in plaintext into
+`/opt/s1-dash/users.json` (0600, uid 1001); the app bcrypt-hashes them in memory at startup.
 
-## Grafana Git Sync Notes
+| Variable | Description |
+|---|---|
+| `vault_grafana_jonathan_password` | s1_dash `jonathan` login password |
+| `vault_grafana_avi_password` | s1_dash `avi` login password |
+| `vault_grafana_chris_password` | s1_dash `chris` login password |
+| `vault_grafana_pkluser_password` | s1_dash `pkluser` login password (PKL User Group; PEPKOR customer scope) |
+| `vault_grafana_cust_bex_password` | s1_dash `cust_bex` login password (BEX customer login) |
+| `vault_grafana_cust_dcb_password` | s1_dash `cust_dcb` login password (DCB customer login) |
+| `vault_grafana_cust_madibana_password` | s1_dash `cust_madibana` login password (MADIBANA customer login) |
+| `vault_grafana_cust_pep_password` | s1_dash `cust_pep` login password (PEP customer login) |
+| `vault_grafana_cust_pep_africa_password` | s1_dash `cust_pep_africa` login password (PEP AFRICA customer login) |
+| `vault_grafana_cust_snowsoft_password` | s1_dash `cust_snowsoft` login password (SNOWSOFT customer login) |
 
-- Dashboard repo: https://github.com/Jwagener1/grafana
-- Branch: `main`
-- Path: `grafana/`
-- Folder structure:
-  - `grafana/Admin/` — internal dashboards (admin_panel, Machine Detail)
-  - `grafana/PEPKOR/` — PEPKOR client dashboards
+Note: a `cust_pepkor` Grafana account existed on the old server but was never vault-backed
+and was not carried into s1_dash (owner decision, 2026-11-23; `pkluser` is the PEPKOR login).
+See the 2026-08-11 vault rotation for context.
 
-## Grafana Org/User Notes
+## No longer used
 
-- Single org: `Main Org.`
-- `pkluser` = PKL User Group shared login (Viewer, PEPKOR folder only)
-- `avi`, `chris` = Viewers (all folders)
-- `jonathan` = Admin
+Grafana was retired when s1_dash took over `dash.sysone.co.za`. Nothing in the repo
+references these any more, so they are safe to delete from the vault later (keep them until
+the Grafana volume and `/opt/grafana` are deleted if you might roll back):
+
+| Variable | Was |
+|---|---|
+| `vault_grafana_admin_password` | Grafana `admin` user password |
+| `vault_grafana_git_sync_token` | GitHub PAT for Grafana Git Sync (repo: Jwagener1/grafana) |
 
 ## s1_reporter
 

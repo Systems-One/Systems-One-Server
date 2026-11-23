@@ -5,8 +5,9 @@ subscriptions/count, messages/stored, version) only when the value CHANGES,
 not every sys_interval. Clearing the broker buffer after each flush
 therefore produces NULL columns in broker.broker_stats for every minute in
 which mosquitto stayed quiet — which is almost all of them — and the
-Grafana broker-health dashboard's "TOP 1 ... ORDER BY id DESC" stat panels
-render empty. The legacy broker-ingestor carried last-known values forward
+dashboard's broker-health stat panels (the "latest row" reads, "TOP 1 ...
+ORDER BY id DESC", behind the s1_dash Broker screen) render empty. The legacy
+broker-ingestor carried last-known values forward
 (zero NULLs through Aug 11; ~95% NULLs from the Aug 12 consolidation on).
 These tests pin the required behavior: a flushed value persists into
 subsequent snapshots until a newer $SYS message replaces it.
