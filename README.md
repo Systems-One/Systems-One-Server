@@ -115,7 +115,7 @@ machine in the `production` inventory:
 | `127.0.0.1:8091` | s1_reporter_charts | Report chart PNGs (nginx) | Loopback / tunnel |
 | `127.0.0.1:8092` | scan_fleet_dashboard | Fleet dashboard API (container port 8000) | Loopback / tunnel |
 | `127.0.0.1:8093` | s1_monitor | new status site (container port 8000), moves to 8090 at cutover | Loopback / tunnel |
-| `127.0.0.1:8094` | s1_dash | new dashboard replacing Grafana (container port 8000). **Preview:** `host_vars/sysone.yml` binds it to `100.102.46.89:8094` over HTTP (Tailscale only); both revert at cutover | Loopback / tunnel (preview: Tailscale) |
+| `127.0.0.1:8094` | s1_dash | new dashboard replacing Grafana (container port 8000). **Preview:** `host_vars/sysone.yml` binds it to `100.102.46.89:8094` over HTTP (Tailscale only); all three overrides (bind address, `SESSION_SECURE`, `TRUST_PROXY_IP`) revert at cutover | Loopback / tunnel (preview: Tailscale) |
 | `100.102.46.89:9100` | printer_relay (host net) | PPNAM Station 1 label jobs to the office printer 192.168.1.45:9100 | Tailscale only |
 
 `scan_fleet_dashboard` defaults to 8091 but is pinned to 8092 in `host_vars/sysone.yml`

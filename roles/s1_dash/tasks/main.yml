@@ -7,6 +7,17 @@
       Set it from vault_s1_dash_session_secret in host_vars.
   no_log: true
 
+- name: Refuse to trust the client-IP header unless bound to loopback
+  assert:
+    that:
+      - (not s1_dash_trust_proxy_ip) or s1_dash_bind_address in ['127.0.0.1', '::1', 'localhost']
+    fail_msg: >-
+      s1_dash_trust_proxy_ip is true but s1_dash_bind_address is not a
+      loopback address. The client-IP header (CF-Connecting-IP) is only
+      trustworthy behind cloudflared on loopback; on any other bind a client
+      can forge it and evade the login throttle. Set s1_dash_trust_proxy_ip
+      to false or bind to 127.0.0.1.
+
 # The image runs as uid 1001 (appuser). The directory is group-owned by that
 # gid and closed to others; users.json is readable by that uid only.
 - name: Ensure s1-dash directory exists
