@@ -127,16 +127,7 @@ s1_monitor_port: 8093
 # (Station 1 printer setting: 100.102.46.89 port 9100).
 printer_relay_enabled: true
 
-# s1_dash (replaces Grafana). PREVIEW values: bound to the box's Tailscale
-# address over plain HTTP so a phone on the tailnet can open
-# http://100.102.46.89:8094. All three overrides revert at cutover (delete these
-# three lines to fall back to the role defaults 127.0.0.1, true and true) in the
-# same PR that moves the Cloudflare route to localhost:8094. trust_proxy_ip is
-# false here because nothing sits in front of the app: a tailnet client could
-# otherwise send its own CF-Connecting-IP and dodge the login throttle.
-s1_dash_bind_address: "100.102.46.89"
-s1_dash_session_secure: false
-s1_dash_trust_proxy_ip: false
+# s1_dash is public at dash.sysone.co.za through the Cloudflare tunnel to localhost:8094.
 s1_dash_session_secret: "{{ vault_s1_dash_session_secret }}"
 s1_dash_ghcr_user: "Systems-One"
 s1_dash_ghcr_token: "{{ vault_s1_dash_ghcr_token }}"

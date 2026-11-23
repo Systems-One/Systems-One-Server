@@ -175,15 +175,28 @@ def test_host_vars_users_and_vault_references():
         assert u["password"] == "{{ %s }}" % name, u["login"]
 
 
-def test_host_vars_preview_and_secrets_are_vault_refs():
+def test_host_vars_secrets_are_vault_refs_and_no_preview_overrides():
     hv = hostvars()
-    assert hv["s1_dash_bind_address"] == "100.102.46.89"
-    assert hv["s1_dash_session_secure"] is False
+    # Production cutover: the role defaults (loopback bind, secure cookie,
+    # trusted CF-Connecting-IP) apply; host_vars must not override them.
+    for key in ("s1_dash_bind_address", "s1_dash_session_secure", "s1_dash_trust_proxy_ip"):
+        assert key not in hv, key
     assert hv["s1_dash_session_secret"] == "{{ vault_s1_dash_session_secret }}"
     assert hv["s1_dash_ghcr_token"] == "{{ vault_s1_dash_ghcr_token }}"
     assert hv["s1_dash_ghcr_user"] == "Systems-One"
     raw = open(os.path.join(REPO, "host_vars", "sysone.yml"), encoding="utf-8").read()
-    assert "revert" in raw.lower() and "cutover" in raw.lower()
+    assert "dash.sysone.co.za" in raw and "localhost:8094" in raw
+
+
+def test_defaults_render_production_values():
+    d = defaults()
+    assert d["s1_dash_bind_address"] == "127.0.0.1"
+    assert d["s1_dash_session_secure"] is True
+    assert d["s1_dash_trust_proxy_ip"] is True
+    svc = compose()["services"]["s1-dash"]
+    assert svc["ports"] == ["127.0.0.1:8094:8000"]
+    assert svc["environment"]["SESSION_SECURE"] == "true"
+    assert svc["environment"]["TRUST_PROXY_IP"] == "true"
 
 
 def test_no_literal_secrets_in_role_yaml():
@@ -212,13 +225,6 @@ def test_trust_proxy_preview_false_production_true():
         s1_dash_trust_proxy_ip=False,
     )["services"]["s1-dash"]["environment"]
     assert prev["TRUST_PROXY_IP"] == "false"
-
-
-def test_host_vars_preview_disables_trust_proxy():
-    hv = hostvars()
-    assert hv["s1_dash_trust_proxy_ip"] is False
-    raw = open(os.path.join(REPO, "host_vars", "sysone.yml"), encoding="utf-8").read()
-    assert "three" in raw.lower()
 
 
 def test_trust_proxy_assertion_conditions():
