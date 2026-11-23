@@ -13,6 +13,7 @@ s1_dash_ghcr_token: ""
 # HMAC key for the session cookie, at least 32 characters (set from vault)
 s1_dash_session_secret: ""
 s1_dash_session_days: 30
+s1_dash_session_hours: 12   # server-side lifetime of a session without "Keep me signed in"
 # false only for a plain-HTTP preview bind
 s1_dash_session_secure: true
 # client IP from CF-Connecting-IP (behind cloudflared)

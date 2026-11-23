@@ -66,6 +66,7 @@ def test_compose_env_covers_spec_table():
     assert env["SESSION_SECURE"] == "true"
     assert env["TRUST_PROXY_IP"] == "true"
     assert env["SESSION_DAYS"] == "30"
+    assert env["SESSION_HOURS"] == "12"
     assert env["QUIET_RATIO"] == "0.2"
     assert env["MIN_ITEMS_PACKET"] == "5"
     assert env["EXPLORER_MAX_POINTS"] == "20000"

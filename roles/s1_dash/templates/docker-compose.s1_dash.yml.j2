@@ -12,6 +12,7 @@ services:
       DASH_USERS_FILE: "/run/secrets/users.json"
       SESSION_SECRET: {{ s1_dash_session_secret | tojson | replace('$', '$$') }}
       SESSION_DAYS: "{{ s1_dash_session_days }}"
+      SESSION_HOURS: "{{ s1_dash_session_hours }}"
       SESSION_SECURE: "{{ 'true' if s1_dash_session_secure else 'false' }}"
       TRUST_PROXY_IP: "{{ 'true' if s1_dash_trust_proxy_ip else 'false' }}"
       LOGIN_MAX_ATTEMPTS: "{{ s1_dash_login_max_attempts }}"
