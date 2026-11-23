@@ -60,7 +60,7 @@ place, harmless, and picked back up if re-enabled).
 
    The restored database carries the old server's login SIDs. `roles/mssql`'s
    bootstrap creates fresh logins on the new box with new SIDs, so the restored
-   database's users are now orphaned — Grafana, Node-RED, and
+   database's users are now orphaned — Grafana and
    `systems_one_ingest` will fail to authenticate until you remap them:
 
    ```bash
@@ -89,7 +89,7 @@ place, harmless, and picked back up if re-enabled).
    ```
 
 5. Re-run the full site (`ansible-playbook -i production site.yml`) to
-   reconcile everything else (Grafana, Node-RED, etc.) from this repo.
+   reconcile everything else (Grafana, etc.) from this repo.
 
 **Test this runbook on staging before you ever need it for real** — a
 snapshot in B2 that's never been restored is not a verified backup.

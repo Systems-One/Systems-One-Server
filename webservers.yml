@@ -29,7 +29,6 @@
     - cloudflared
     - grafana
     - mqtt
-    - nodered
     - role: mqtt_ingestor
       tags: mqtt_ingestor
     - s1_dashboard

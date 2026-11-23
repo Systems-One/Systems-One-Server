@@ -1,11 +1,7 @@
 ---
 # Shared Docker network used by all compose stacks so containers can reach
-# each other by container name (e.g. Node-RED -> mssql).
+# each other by container name (e.g. mqtt-ingestor -> mssql).
 docker_shared_network: infra
-
-# Run Node-RED in host network mode by default.
-# Individual environments/hosts can override (e.g. staging uses bridge mode to publish ports).
-nodered_network_mode: host
 
 # Offsite backup gate — see roles/backup and
 # docs/superpowers/specs/2026-08-11-offsite-backup-b2-design.md.

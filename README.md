@@ -30,8 +30,6 @@ fleet health, throughput and scan-quality views.
 flowchart LR
     subgraph sites["Customer sites"]
         dev["Scan stations / devices"]
-        pep["PEP inbound (TCP 10069)"]
-        opc["PPNAM OPC UA"]
     end
 
     subgraph host["sysone (single Docker host)"]
@@ -40,7 +38,6 @@ flowchart LR
         mq["mosquitto<br/>1883 / 9001"]
         ing["mqtt-ingestor-merged<br/>spool, batch, MSSQL"]
         db[("mssql<br/>S1_Remote_Monitoring")]
-        nr["nodered<br/>(host network)"]
         gf["grafana :3000"]
         md["marketing_display :8090"]
         sfd["scan_fleet_dashboard :8092"]
@@ -58,9 +55,6 @@ flowchart LR
     dev -- "MQTT systems-one/# and systemsone/#" --> mq
     mq -- "plus $SYS/# broker stats" --> ing
     ing --> db
-    pep --> nr
-    opc --> nr
-    nr --> mq
     db --> gf
     db --> md
     db --> sfd
@@ -90,7 +84,7 @@ machine in the `production` inventory:
 
 | Play | Group | Roles (in order) |
 |---|---|---|
-| `webservers.yml` | `webservers` | `docker`, `cloudflared`, `grafana`, `mqtt`, `nodered`, `mqtt_ingestor`, `s1_dashboard`, `s1_reporter`, `marketing_display`, `scan_fleet_dashboard`, `s1_monitor`, `s1_baselines`, `printer_relay` (only when `printer_relay_enabled`) |
+| `webservers.yml` | `webservers` | `docker`, `cloudflared`, `grafana`, `mqtt`, `mqtt_ingestor`, `s1_dashboard`, `s1_reporter`, `marketing_display`, `scan_fleet_dashboard`, `s1_monitor`, `s1_baselines`, `printer_relay` (only when `printer_relay_enabled`) |
 | `dbservers.yml` | `dbservers` | `docker`, `mssql`, `backup` |
 
 `site.yml` imports both. `staging` is a second inventory with the same group layout
@@ -98,14 +92,12 @@ machine in the `production` inventory:
 
 **Docker networking.** All compose stacks join one external bridge network, `infra`
 (`docker_shared_network` in `group_vars/all.yml`), so containers reach each other by name
-(`mssql`, `mosquitto`). Two containers run in `network_mode: host` instead:
+(`mssql`, `mosquitto`). One container runs in `network_mode: host` instead:
 
 - `cloudflared` (production only, see `host_vars/sysone.yml`). Because it is on the host
   stack it **cannot resolve container names**. Anything routed through the tunnel must
   publish a loopback port, and the Cloudflare public hostname must point at
   `localhost:<port>`.
-- `nodered` (production). Its TCP listener for inbound PEP devices binds directly on the
-  host. Staging runs Node-RED in bridge mode and publishes ports explicitly.
 
 **Host port map (production, confirmed with `docker ps` on 2026-09-09):**
 
@@ -116,8 +108,6 @@ machine in the `production` inventory:
 | `0.0.0.0:1433` | mssql | SQL Server | LAN |
 | `0.0.0.0:8084` | mqtt-ingestor-merged | ingestor `/health` (container port 8080) | LAN |
 | `0.0.0.0:9111` | mqtt-ingestor-merged | Prometheus metrics (container port 9108) | LAN |
-| `*:10069` | nodered (host net) | PEP inbound device TCP server | Internet / devices |
-| `127.0.0.1:1880` | nodered (host net) | Node-RED editor | Loopback / tunnel |
 | `127.0.0.1:3000` | grafana | Grafana UI | Loopback / tunnel |
 | `127.0.0.1:8090` | marketing_display | Status page (container port 8000) | Loopback / tunnel |
 | `127.0.0.1:8091` | s1_reporter_charts | Report chart PNGs (nginx) | Loopback / tunnel |
@@ -141,7 +131,6 @@ built into an image on the host.
 | `mqtt` | `mosquitto` | `eclipse-mosquitto:2` | `/opt/mqtt` | MQTT broker with persistence and password auth only (no anonymous). Ports 1883 and 9001. The password file is regenerated whenever the vault credentials change. `mosquitto_max_packet_size` caps packet size. |
 | `mqtt_ingestor` | `mqtt-ingestor-merged` | built `mqtt-ingestor-merged:latest` | `/opt/mqtt_ingestor` | The single ingest process. One MQTT client subscribed to `systems-one/#`, `systemsone/#` and `$SYS/#`. Device telemetry goes to `dbo.*` tables and broker stats to `broker.broker_stats`, through a SQLite spool, a batched writer, retry with backoff and a dead-letter table. Optional customer/location allowlist. Exposes `/health` and Prometheus metrics. |
 | `mssql` | `mssql` | `mcr.microsoft.com/mssql/server:2022-latest` | `/opt/mssql` | SQL Server Developer edition. Creates `S1_Remote_Monitoring`, the `admin` application login and the `dbo.*` schema from `bootstrap.remote_monitoring.sql.j2`. A second bootstrap for a legacy `Systems_One` database exists but only runs when `mssql_bootstrap_enabled` is true. |
-| `nodered` | `nodered` | `nodered/node-red` | `/opt/nodered` | Two flows from `files/flows.json`: **PEP Inbound Server** (TCP server on 10069 for devices that speak raw TCP rather than MQTT) and **PPNAM Station 2 MQTT** (OPC UA endpoints republished to MQTT). Flows and `settings.js` are provisioned from the repo unless Projects mode is enabled. |
 | `grafana` | `grafana` | `grafana/grafana-oss` | `/opt/grafana` | Broker and system health dashboards over an MSSQL datasource. Dashboards come from a separate repo via Grafana Git Sync, and orgs and users are provisioned through the HTTP API on each deploy. See [Grafana](#grafana). |
 | `marketing_display` | `marketing_display` | built `marketing-display:latest` | `/opt/marketing-display` | FastAPI plus static HTML and Chart.js "S1 Remote Monitoring" status page (`/` and `history.html`). Read-only over the RM database with a 30 s cache. |
 | `scan_fleet_dashboard` | `scan_fleet_dashboard` | built `scan-fleet-dashboard:latest` | `/opt/scan-fleet-dashboard` | FastAPI JSON API for the fleet dashboard: customers, machines, performance, throughput KPIs, intraday and per-machine views, per-customer thresholds and optional per-user customer scoping (`AUTH_ENABLED`). Runs side-by-side with `marketing_display` until cutover. |
@@ -162,7 +151,6 @@ Which service talks to what:
 | `grafana` | reads `S1_Remote_Monitoring` via the provisioned MSSQL datasource | `admin` |
 | `s1_reporter` | reads telemetry, `customer_config`, `alert_thresholds`; writes `dbo.device_status` | `admin` |
 | `s1_baselines` | reads `device_statistics`, writes `alert_thresholds` | `admin` |
-| `nodered` | publishes to `mosquitto` | vault MQTT user |
 | `backup` | dumps `mssql`, tars the Mosquitto volume | `sa` inside the container |
 
 ## Data
@@ -186,11 +174,11 @@ One database, `S1_Remote_Monitoring`, on the `mssql` container. The schema is cr
 
 Persistent Docker volumes: `mssql_data`, `mosquitto_data`, `grafana_data`,
 `s1_reporter_data`, `s1_reporter_charts`, and the ingestor's `spool-data` and
-`settings-data`. Node-RED state is a bind mount at `/opt/nodered/data`.
+`settings-data`.
 
 ## Public exposure (Cloudflare Tunnel)
 
-Nothing except MQTT, SQL Server and the Node-RED device listener is published beyond
+Nothing except MQTT and SQL Server is published beyond
 loopback. Web UIs are reached through the Cloudflare Tunnel, whose public hostnames are
 configured in Cloudflare Zero Trust, not in this repo. Known routes:
 
@@ -200,7 +188,7 @@ configured in Cloudflare Zero Trust, not in this repo. Known routes:
 | `charts.sysone.co.za` | `localhost:8091` (s1_reporter_charts) |
 | `charts-staging.sysone.co.za` | staging equivalent |
 
-Grafana, the scan-fleet API and the Node-RED editor are also loopback-bound and served the
+Grafana and the scan-fleet API are also loopback-bound and served the
 same way. Because `cloudflared` runs on the host network, every tunnel target must be a
 `localhost:<port>` address, never a container name.
 
@@ -226,7 +214,7 @@ site.yml                   imports webservers.yml and dbservers.yml
 webservers.yml             web tier play (all application roles)
 dbservers.yml              db tier play (mssql and backup)
 production / staging       INI inventories (sysone / sysone_staging)
-group_vars/all.yml         shared network name, Node-RED mode, backup gate defaults
+group_vars/all.yml         shared network name, backup gate defaults
 group_vars/dbservers.yml   RM database name and application login
 group_vars/vault.yml       Ansible Vault with all secrets, loaded explicitly by each play
 host_vars/sysone.yml       production host: local connection, host-network cloudflared, Grafana users, ports
@@ -346,5 +334,4 @@ Starting points for the overhaul, all confirmed against the repo or the live hos
 - `marketing_display` and `scan_fleet_dashboard` overlap. `s1_monitor` replaces both at
   cutover.
 - `ppnam-sync`, `wetty` and the Eskom app share the host but sit outside Ansible.
-- `nodered` runs `nodered/node-red:latest` in production while staging pins `5.0`.
 - The `mqtt` role ships an empty `Caddyfile.j2` that nothing uses.
