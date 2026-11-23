@@ -40,6 +40,8 @@
       tags: [scan_fleet_dashboard]
     - role: s1_monitor
       tags: [s1_monitor]
+    - role: s1_dash
+      tags: [s1_dash]
     - role: s1_baselines
       tags: [s1_baselines]
     - role: printer_relay
