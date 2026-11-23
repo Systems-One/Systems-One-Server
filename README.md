@@ -42,6 +42,7 @@ flowchart LR
         md["marketing_display :8090"]
         sfd["scan_fleet_dashboard :8092"]
         mon["s1_monitor :8090"]
+        dash["s1_dash :8094"]
         rep["s1_reporter<br/>(host cron, one-shot)"]
         charts["s1_reporter_charts<br/>nginx :8091"]
         tty["s1_dashboard<br/>(TTY1 console)"]
@@ -59,6 +60,7 @@ flowchart LR
     db --> md
     db --> sfd
     db --> mon
+    db --> dash
     db --> rep
     rep -- "Adaptive Cards" --> teams
     rep -- "PNG charts" --> charts
@@ -84,7 +86,7 @@ machine in the `production` inventory:
 
 | Play | Group | Roles (in order) |
 |---|---|---|
-| `webservers.yml` | `webservers` | `docker`, `cloudflared`, `grafana`, `mqtt`, `mqtt_ingestor`, `s1_dashboard`, `s1_reporter`, `marketing_display`, `scan_fleet_dashboard`, `s1_monitor`, `s1_baselines`, `printer_relay` (only when `printer_relay_enabled`) |
+| `webservers.yml` | `webservers` | `docker`, `cloudflared`, `grafana`, `mqtt`, `mqtt_ingestor`, `s1_dashboard`, `s1_reporter`, `marketing_display`, `scan_fleet_dashboard`, `s1_monitor`, `s1_dash`, `s1_baselines`, `printer_relay` (only when `printer_relay_enabled`) |
 | `dbservers.yml` | `dbservers` | `docker`, `mssql`, `backup` |
 
 `site.yml` imports both. `staging` is a second inventory with the same group layout
@@ -113,6 +115,7 @@ machine in the `production` inventory:
 | `127.0.0.1:8091` | s1_reporter_charts | Report chart PNGs (nginx) | Loopback / tunnel |
 | `127.0.0.1:8092` | scan_fleet_dashboard | Fleet dashboard API (container port 8000) | Loopback / tunnel |
 | `127.0.0.1:8093` | s1_monitor | new status site (container port 8000), moves to 8090 at cutover | Loopback / tunnel |
+| `127.0.0.1:8094` | s1_dash | new dashboard replacing Grafana (container port 8000). **Preview:** `host_vars/sysone.yml` binds it to `100.102.46.89:8094` over HTTP (Tailscale only); both revert at cutover | Loopback / tunnel (preview: Tailscale) |
 | `100.102.46.89:9100` | printer_relay (host net) | PPNAM Station 1 label jobs to the office printer 192.168.1.45:9100 | Tailscale only |
 
 `scan_fleet_dashboard` defaults to 8091 but is pinned to 8092 in `host_vars/sysone.yml`
@@ -134,6 +137,7 @@ built into an image on the host.
 | `grafana` | `grafana` | `grafana/grafana-oss` | `/opt/grafana` | Broker and system health dashboards over an MSSQL datasource. Dashboards come from a separate repo via Grafana Git Sync, and orgs and users are provisioned through the HTTP API on each deploy. See [Grafana](#grafana). |
 | `marketing_display` | `marketing_display` | built `marketing-display:latest` | `/opt/marketing-display` | FastAPI plus static HTML and Chart.js "S1 Remote Monitoring" status page (`/` and `history.html`). Read-only over the RM database with a 30 s cache. |
 | `scan_fleet_dashboard` | `scan_fleet_dashboard` | built `scan-fleet-dashboard:latest` | `/opt/scan-fleet-dashboard` | FastAPI JSON API for the fleet dashboard: customers, machines, performance, throughput KPIs, intraday and per-machine views, per-customer thresholds and optional per-user customer scoping (`AUTH_ENABLED`). Runs side-by-side with `marketing_display` until cutover. |
+| `s1_dash` | `s1_dash` | `ghcr.io/systems-one/s1-dash:<tag>` (private, pulled) | `/opt/s1-dash` | FastAPI customer and operations dashboard replacing Grafana, built from the `Systems-One-Dash` repo. Per-login access (admin, internal viewer, customer-scoped) from `/opt/s1-dash/users.json`. Reads `S1_Remote_Monitoring` as `admin`; keeps `dbo.dash_*` tables. |
 | `s1_monitor` | `s1_monitor` | built `s1-monitor:latest` | `/opt/s1-monitor` | FastAPI plus static ECharts site "S1 Remote Monitoring" for fault diagnosis: Fleet, Device (summary, errors, daily figures, throughput heatmap, comparison, downloads), Trends. Records host health snapshots into `dbo.device_health_history` every 15 min. Replaces `marketing_display` and `scan_fleet_dashboard` at cutover. |
 | `s1_reporter` | one-shot `reporter` via `compose run`, plus `s1_reporter_charts` | built `s1-reporter:latest`, `nginx:alpine` | `/opt/s1-reporter` | Teams alerts and reports as host-cron jobs: `sync-status` every 20 min, `check-alerts` every 20 min on weekdays, `daily` 06:00 weekdays, `monthly` on the 1st, `stale-digest` Monday 07:00. Customer capabilities and limits live in `dbo.customer_config`; per-device `reporting_enabled` and `muted_until` on `dbo.devices`. Chart PNGs served by nginx as `charts.sysone.co.za`. |
 | `s1_baselines` | none (one-shot via `compose run`) | built `s1-baselines:latest` | `/opt/s1-baselines` | Recomputes `dbo.alert_thresholds` from 60 days of `device_statistics`. Host cron runs `run-baselines.sh apply` every Sunday 02:00; operators run `sudo /opt/s1-baselines/run-baselines.sh dry-run` to preview (the compose file and log are root-owned). Owns the table's DDL via `migrate`. |
@@ -147,7 +151,7 @@ Which service talks to what:
 | Consumer | Reads / writes | Login used |
 |---|---|---|
 | `mqtt_ingestor` | writes `dbo.*`, `broker.broker_stats`, `ingest.*` | `mssql_rm_admin_login` (`admin`) |
-| `marketing_display`, `scan_fleet_dashboard`, `s1_dashboard` | read `S1_Remote_Monitoring` | `admin` |
+| `marketing_display`, `scan_fleet_dashboard`, `s1_dashboard`, `s1_dash` | read `S1_Remote_Monitoring` | `admin` |
 | `grafana` | reads `S1_Remote_Monitoring` via the provisioned MSSQL datasource | `admin` |
 | `s1_reporter` | reads telemetry, `customer_config`, `alert_thresholds`; writes `dbo.device_status` | `admin` |
 | `s1_baselines` | reads `device_statistics`, writes `alert_thresholds` | `admin` |
@@ -246,7 +250,7 @@ ansible-playbook -i production dbservers.yml                         # mssql and
 ```
 
 Roles that carry tags: `mqtt_ingestor`, `s1_reporter`, `marketing_display`,
-`scan_fleet_dashboard`, `s1_monitor`, `s1_baselines`. Using `--tags` skips untagged tasks, which is why the vault-loading
+`scan_fleet_dashboard`, `s1_monitor`, `s1_dash`, `s1_baselines`. Using `--tags` skips untagged tasks, which is why the vault-loading
 and backup-gate pre-tasks are tagged `always`.
 
 GitHub Actions (`.github/workflows`):
@@ -302,6 +306,7 @@ python -m unittest discover -s roles/s1_reporter/tests
 python -m unittest discover -s roles/mqtt_ingestor/tests
 python -m pytest roles/scan_fleet_dashboard/tests
 python -m pytest roles/s1_monitor/tests
+python -m pytest roles/s1_dash/tests
 python -m unittest discover -s roles/printer_relay/tests
 ```
 
