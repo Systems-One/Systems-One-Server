@@ -184,7 +184,7 @@ def test_host_vars_preview_and_secrets_are_vault_refs():
     assert hv["s1_dash_session_secure"] is False
     assert hv["s1_dash_session_secret"] == "{{ vault_s1_dash_session_secret }}"
     assert hv["s1_dash_ghcr_token"] == "{{ vault_s1_dash_ghcr_token }}"
-    assert hv["s1_dash_ghcr_user"] == "Jwagener1"
+    assert hv["s1_dash_ghcr_user"] == "Systems-One"
     raw = open(os.path.join(REPO, "host_vars", "sysone.yml"), encoding="utf-8").read()
     assert "revert" in raw.lower() and "cutover" in raw.lower()
 

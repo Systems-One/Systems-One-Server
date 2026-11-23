@@ -138,7 +138,7 @@ s1_dash_bind_address: "100.102.46.89"
 s1_dash_session_secure: false
 s1_dash_trust_proxy_ip: false
 s1_dash_session_secret: "{{ vault_s1_dash_session_secret }}"
-s1_dash_ghcr_user: "Jwagener1"
+s1_dash_ghcr_user: "Systems-One"
 s1_dash_ghcr_token: "{{ vault_s1_dash_ghcr_token }}"
 s1_dash_users:
   - login: "jonathan"
