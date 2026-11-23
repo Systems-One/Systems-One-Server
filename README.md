@@ -21,7 +21,7 @@ fleet health, throughput and scan-quality views.
 - [Secrets](#secrets)
 - [Backups](#backups)
 - [Tests and CI](#tests-and-ci)
-- [Grafana](#grafana)
+- [s1_dash](#s1_dash)
 - [Known rough edges](#known-rough-edges)
 
 ## Architecture
@@ -38,7 +38,6 @@ flowchart LR
         mq["mosquitto<br/>1883 / 9001"]
         ing["mqtt-ingestor-merged<br/>spool, batch, MSSQL"]
         db[("mssql<br/>S1_Remote_Monitoring")]
-        gf["grafana :3000"]
         md["marketing_display :8090"]
         sfd["scan_fleet_dashboard :8092"]
         mon["s1_monitor :8090"]
@@ -56,7 +55,6 @@ flowchart LR
     dev -- "MQTT systems-one/# and systemsone/#" --> mq
     mq -- "plus $SYS/# broker stats" --> ing
     ing --> db
-    db --> gf
     db --> md
     db --> sfd
     db --> mon
@@ -69,15 +67,15 @@ flowchart LR
     mq --> bk
     bk --> b2
     web --> cf
-    cf --> gf
+    cf --> dash
     cf --> md
     cf --> sfd
     cf --> mon
     cf --> charts
 ```
 
-Data path in one line: **device to Mosquitto to mqtt_ingestor to SQL Server to Grafana,
-dashboards and reporter**.
+Data path in one line: **device to Mosquitto to mqtt_ingestor to SQL Server to s1_dash,
+other dashboards and the reporter**.
 
 ## Host and network layout
 
@@ -86,7 +84,7 @@ machine in the `production` inventory:
 
 | Play | Group | Roles (in order) |
 |---|---|---|
-| `webservers.yml` | `webservers` | `docker`, `cloudflared`, `grafana`, `mqtt`, `mqtt_ingestor`, `s1_dashboard`, `s1_reporter`, `marketing_display`, `scan_fleet_dashboard`, `s1_monitor`, `s1_dash`, `s1_baselines`, `printer_relay` (only when `printer_relay_enabled`) |
+| `webservers.yml` | `webservers` | `docker`, `cloudflared`, `mqtt`, `mqtt_ingestor`, `s1_dashboard`, `s1_reporter`, `marketing_display`, `scan_fleet_dashboard`, `s1_monitor`, `s1_dash`, `s1_baselines`, `printer_relay` (only when `printer_relay_enabled`) |
 | `dbservers.yml` | `dbservers` | `docker`, `mssql`, `backup` |
 
 `site.yml` imports both. `staging` is a second inventory with the same group layout
@@ -110,12 +108,11 @@ machine in the `production` inventory:
 | `0.0.0.0:1433` | mssql | SQL Server | LAN |
 | `0.0.0.0:8084` | mqtt-ingestor-merged | ingestor `/health` (container port 8080) | LAN |
 | `0.0.0.0:9111` | mqtt-ingestor-merged | Prometheus metrics (container port 9108) | LAN |
-| `127.0.0.1:3000` | grafana | Grafana UI | Loopback / tunnel |
 | `127.0.0.1:8090` | marketing_display | Status page (container port 8000) | Loopback / tunnel |
 | `127.0.0.1:8091` | s1_reporter_charts | Report chart PNGs (nginx) | Loopback / tunnel |
 | `127.0.0.1:8092` | scan_fleet_dashboard | Fleet dashboard API (container port 8000) | Loopback / tunnel |
 | `127.0.0.1:8093` | s1_monitor | new status site (container port 8000), moves to 8090 at cutover | Loopback / tunnel |
-| `127.0.0.1:8094` | s1_dash | new dashboard replacing Grafana (container port 8000). **Preview:** `host_vars/sysone.yml` binds it to `100.102.46.89:8094` over HTTP (Tailscale only); all three overrides (bind address, `SESSION_SECURE`, `TRUST_PROXY_IP`) revert at cutover | Loopback / tunnel (preview: Tailscale) |
+| `127.0.0.1:8094` | s1_dash | public dashboard at `dash.sysone.co.za` (container port 8000) | Loopback / tunnel |
 | `100.102.46.89:9100` | printer_relay (host net) | PPNAM Station 1 label jobs to the office printer 192.168.1.45:9100 | Tailscale only |
 
 `scan_fleet_dashboard` defaults to 8091 but is pinned to 8092 in `host_vars/sysone.yml`
@@ -134,10 +131,9 @@ built into an image on the host.
 | `mqtt` | `mosquitto` | `eclipse-mosquitto:2` | `/opt/mqtt` | MQTT broker with persistence and password auth only (no anonymous). Ports 1883 and 9001. The password file is regenerated whenever the vault credentials change. `mosquitto_max_packet_size` caps packet size. |
 | `mqtt_ingestor` | `mqtt-ingestor-merged` | built `mqtt-ingestor-merged:latest` | `/opt/mqtt_ingestor` | The single ingest process. One MQTT client subscribed to `systems-one/#`, `systemsone/#` and `$SYS/#`. Device telemetry goes to `dbo.*` tables and broker stats to `broker.broker_stats`, through a SQLite spool, a batched writer, retry with backoff and a dead-letter table. Optional customer/location allowlist. Exposes `/health` and Prometheus metrics. |
 | `mssql` | `mssql` | `mcr.microsoft.com/mssql/server:2022-latest` | `/opt/mssql` | SQL Server Developer edition. Creates `S1_Remote_Monitoring`, the `admin` application login and the `dbo.*` schema from `bootstrap.remote_monitoring.sql.j2`. A second bootstrap for a legacy `Systems_One` database exists but only runs when `mssql_bootstrap_enabled` is true. |
-| `grafana` | `grafana` | `grafana/grafana-oss` | `/opt/grafana` | Broker and system health dashboards over an MSSQL datasource. Dashboards come from a separate repo via Grafana Git Sync, and orgs and users are provisioned through the HTTP API on each deploy. See [Grafana](#grafana). |
 | `marketing_display` | `marketing_display` | built `marketing-display:latest` | `/opt/marketing-display` | FastAPI plus static HTML and Chart.js "S1 Remote Monitoring" status page (`/` and `history.html`). Read-only over the RM database with a 30 s cache. |
 | `scan_fleet_dashboard` | `scan_fleet_dashboard` | built `scan-fleet-dashboard:latest` | `/opt/scan-fleet-dashboard` | FastAPI JSON API for the fleet dashboard: customers, machines, performance, throughput KPIs, intraday and per-machine views, per-customer thresholds and optional per-user customer scoping (`AUTH_ENABLED`). Runs side-by-side with `marketing_display` until cutover. |
-| `s1_dash` | `s1_dash` | `ghcr.io/systems-one/s1-dash:<tag>` (private, pulled) | `/opt/s1-dash` | FastAPI customer and operations dashboard replacing Grafana, built from the `Systems-One-Dash` repo. Per-login access (admin, internal viewer, customer-scoped) from `/opt/s1-dash/users.json`. Reads `S1_Remote_Monitoring` as `admin`; keeps `dbo.dash_*` tables. |
+| `s1_dash` | `s1_dash` | `ghcr.io/systems-one/s1-dash:<tag>` (private, pulled) | `/opt/s1-dash` | FastAPI customer and operations dashboard, public at `dash.sysone.co.za` (it replaced Grafana), built from the `Systems-One-Dash` repo. See [s1_dash](#s1_dash). Per-login access (admin, internal viewer, customer-scoped) from `/opt/s1-dash/users.json`. Reads `S1_Remote_Monitoring` as `admin`; keeps `dbo.dash_*` tables. |
 | `s1_monitor` | `s1_monitor` | built `s1-monitor:latest` | `/opt/s1-monitor` | FastAPI plus static ECharts site "S1 Remote Monitoring" for fault diagnosis: Fleet, Device (summary, errors, daily figures, throughput heatmap, comparison, downloads), Trends. Records host health snapshots into `dbo.device_health_history` every 15 min. Replaces `marketing_display` and `scan_fleet_dashboard` at cutover. |
 | `s1_reporter` | one-shot `reporter` via `compose run`, plus `s1_reporter_charts` | built `s1-reporter:latest`, `nginx:alpine` | `/opt/s1-reporter` | Teams alerts and reports as host-cron jobs: `sync-status` every 20 min, `check-alerts` every 20 min on weekdays, `daily` 06:00 weekdays, `monthly` on the 1st, `stale-digest` Monday 07:00. Customer capabilities and limits live in `dbo.customer_config`; per-device `reporting_enabled` and `muted_until` on `dbo.devices`. Chart PNGs served by nginx as `charts.sysone.co.za`. |
 | `s1_baselines` | none (one-shot via `compose run`) | built `s1-baselines:latest` | `/opt/s1-baselines` | Recomputes `dbo.alert_thresholds` from 60 days of `device_statistics`. Host cron runs `run-baselines.sh apply` every Sunday 02:00; operators run `sudo /opt/s1-baselines/run-baselines.sh dry-run` to preview (the compose file and log are root-owned). Owns the table's DDL via `migrate`. |
@@ -152,7 +148,6 @@ Which service talks to what:
 |---|---|---|
 | `mqtt_ingestor` | writes `dbo.*`, `broker.broker_stats`, `ingest.*` | `mssql_rm_admin_login` (`admin`) |
 | `marketing_display`, `scan_fleet_dashboard`, `s1_dashboard`, `s1_dash` | read `S1_Remote_Monitoring` | `admin` |
-| `grafana` | reads `S1_Remote_Monitoring` via the provisioned MSSQL datasource | `admin` |
 | `s1_reporter` | reads telemetry, `customer_config`, `alert_thresholds`; writes `dbo.device_status` | `admin` |
 | `s1_baselines` | reads `device_statistics`, writes `alert_thresholds` | `admin` |
 | `backup` | dumps `mssql`, tars the Mosquitto volume | `sa` inside the container |
@@ -176,9 +171,10 @@ One database, `S1_Remote_Monitoring`, on the `mssql` container. The schema is cr
 | `ingest.pipeline_state`, `ingest.telemetry_deadletter` | ingestor | Pipeline bookkeeping and messages that failed every retry. |
 | `dbo.DailyStats`, `driver_log`, `ItemLog`, `TripInfo` | legacy `Systems_One` bootstrap | Older schema, only created when `mssql_bootstrap_enabled` is true. |
 
-Persistent Docker volumes: `mssql_data`, `mosquitto_data`, `grafana_data`,
+Persistent Docker volumes: `mssql_data`, `mosquitto_data`,
 `s1_reporter_data`, `s1_reporter_charts`, and the ingestor's `spool-data` and
-`settings-data`.
+`settings-data`. (The retired Grafana volume `grafana_grafana_data` is kept on the host for
+rollback, see [s1_dash](#s1_dash).)
 
 ## Public exposure (Cloudflare Tunnel)
 
@@ -189,10 +185,11 @@ configured in Cloudflare Zero Trust, not in this repo. Known routes:
 | Hostname | Target on the host |
 |---|---|
 | `sysone.co.za` | `localhost:8090` (marketing_display) |
+| `dash.sysone.co.za` | `localhost:8094` (s1_dash) |
 | `charts.sysone.co.za` | `localhost:8091` (s1_reporter_charts) |
 | `charts-staging.sysone.co.za` | staging equivalent |
 
-Grafana and the scan-fleet API are also loopback-bound and served the
+The scan-fleet API is also loopback-bound and served the
 same way. Because `cloudflared` runs on the host network, every tunnel target must be a
 `localhost:<port>` address, never a container name.
 
@@ -221,11 +218,10 @@ production / staging       INI inventories (sysone / sysone_staging)
 group_vars/all.yml         shared network name, backup gate defaults
 group_vars/dbservers.yml   RM database name and application login
 group_vars/vault.yml       Ansible Vault with all secrets, loaded explicitly by each play
-host_vars/sysone.yml       production host: local connection, host-network cloudflared, Grafana users, ports
+host_vars/sysone.yml       production host: local connection, host-network cloudflared, s1_dash users, ports
 host_vars/sysone_staging.yml  staging host overrides
 roles/                     one role per service (see Services)
 docs/superpowers/          dated design specs and implementation plans
-tools/                     grafana_export_dashboards.py, sync_nodered_flows.py
 scripts/                   install-github-actions-runner.sh (self-hosted runner)
 molecule/                  Molecule scenario for the docker role
 .github/workflows/         ci.yml, deploy.yml, rollback.yml
@@ -273,7 +269,8 @@ ansible-playbook -i staging site.yml
 
 All secrets live in `group_vars/vault.yml`, encrypted with Ansible Vault. The vault
 password sits in the gitignored `.vault_pass` on each machine that runs Ansible. Every
-variable is listed in `VAULT_VARS.md`. Edit with:
+variable is listed in `VAULT_VARS.md`, including the `vault_grafana_<login>_password` names
+that are now the s1_dash login passwords. Edit with:
 
 ```bash
 ansible-vault edit group_vars/vault.yml
@@ -310,21 +307,46 @@ python -m pytest roles/s1_dash/tests
 python -m unittest discover -s roles/printer_relay/tests
 ```
 
-## Grafana
+## s1_dash
 
-- **Dashboards** are synced from the dedicated repo
-  [Jwagener1/grafana](https://github.com/Jwagener1/grafana) (`grafana/` path, `main`
-  branch) using Grafana v12 Git Sync, configured idempotently through the provisioning API
-  in `roles/grafana/tasks/git_sync.yml`. Legacy file provisioning is skipped while Git Sync
-  is on.
-- **Datasource** is the MSSQL RM database, provisioned from a template with a fixed UID that
-  the dashboards reference.
-- **Orgs and users** are created and updated via the HTTP API on every deploy from
-  `grafana_users` in `host_vars`. Passwords are vault-backed. One live account,
-  `cust_pepkor`, is intentionally left unmanaged.
-- Session lifetimes are extended so kiosk dashboards do not spam token-rotation errors.
-- `tools/grafana_export_dashboards.py` pulls dashboards out of a running Grafana as JSON if
-  you need to seed the dashboard repo.
+`s1_dash` is the public dashboard at `https://dash.sysone.co.za`. It is a FastAPI container
+(`ghcr.io/systems-one/s1-dash`, private image pulled with the `Systems-One` account) bound to
+`127.0.0.1:8094`, with `SESSION_SECURE` and `TRUST_PROXY_IP` on because Cloudflare terminates
+TLS in front of it. The role asserts that trust-proxy is only enabled with a loopback bind.
+
+- **Logins** come from `s1_dash_users` in `host_vars/sysone.yml` and are rendered to
+  `/opt/s1-dash/users.json`. The ten passwords are the `vault_grafana_<login>_password`
+  variables; the names are historical (they began as Grafana passwords). See `VAULT_VARS.md`.
+- **Data** is read-only over `S1_Remote_Monitoring` as `admin`; the app keeps its own
+  `dbo.dash_*` tables.
+
+### Cutover and rollback
+
+Grafana was retired when `dash.sysone.co.za` moved to s1_dash. The Cloudflare public hostname
+(Zero Trust, not in this repo) was changed from `localhost:3000` to `localhost:8094`. The
+`grafana` role is gone from the repo, but the container's data is deliberately kept on the
+host until the owner deletes it: the Docker volume `grafana_grafana_data` and the directory
+`/opt/grafana` (compose file, provisioning, dashboard checkout).
+
+Stop and remove the Grafana container while keeping the volume and directory (no `-v`):
+
+```bash
+cd /opt/grafana && docker compose down
+```
+
+To bring Grafana back while the volume and directory still exist:
+
+```bash
+cd /opt/grafana && docker compose up -d      # listens on 127.0.0.1:3000
+```
+
+then point the `dash.sysone.co.za` route in Cloudflare back to `localhost:3000`. The compose
+file in `/opt/grafana` is the last one the retired role rendered; the role itself is in git
+history before the `chore: remove the grafana role` commit. To delete Grafana for good:
+`docker volume rm grafana_grafana_data && rm -rf /opt/grafana` (and remove the image).
+
+There is no automated legacy-retirement play in this repo: retired services (Node-RED,
+Grafana) are removed from the host by hand and the role is deleted.
 
 ## Known rough edges
 

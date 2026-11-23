@@ -23,7 +23,7 @@ Fleet uptime assurance for Systems One's remote monitoring platform. Scan statio
   - `scan_fleet_dashboard` — FastAPI dashboard with auth, thresholds, and throughput views.
   - `s1_monitor` — new status site replacing `marketing_display` and `scan_fleet_dashboard`.
   - `s1_dashboard` — autologin kiosk-style Docker status display on the server.
-  - Grafana — broker/system health dashboards.
+  - `s1_dash` — public customer and operations dashboard at `dash.sysone.co.za` (replaced Grafana).
 - Supporting services: `s1_reporter` (reports, charts, Microsoft Teams notifications), backups, cloudflared.
 - Fleet scale at time of writing: ~19 registered devices across multiple customers and locations (from the production database).
 
