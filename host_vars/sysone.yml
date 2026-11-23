@@ -37,7 +37,9 @@ s1_monitor_port: 8093
 # (Station 1 printer setting: 100.102.46.89 port 9100).
 printer_relay_enabled: true
 
-# s1_dash is public at dash.sysone.co.za through the Cloudflare tunnel to localhost:8094.
+# s1_dash is public at dash.sysone.co.za through the Cloudflare tunnel to localhost:3000.
+# It listens on the port Grafana used, so the existing Cloudflare route needed no change.
+s1_dash_port: 3000
 s1_dash_session_secret: "{{ vault_s1_dash_session_secret }}"
 s1_dash_ghcr_user: "Systems-One"
 s1_dash_ghcr_token: "{{ vault_s1_dash_ghcr_token }}"

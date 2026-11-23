@@ -41,7 +41,7 @@ flowchart LR
         md["marketing_display :8090"]
         sfd["scan_fleet_dashboard :8092"]
         mon["s1_monitor :8090"]
-        dash["s1_dash :8094"]
+        dash["s1_dash :3000"]
         rep["s1_reporter<br/>(host cron, one-shot)"]
         charts["s1_reporter_charts<br/>nginx :8091"]
         tty["s1_dashboard<br/>(TTY1 console)"]
@@ -112,7 +112,7 @@ machine in the `production` inventory:
 | `127.0.0.1:8091` | s1_reporter_charts | Report chart PNGs (nginx) | Loopback / tunnel |
 | `127.0.0.1:8092` | scan_fleet_dashboard | Fleet dashboard API (container port 8000) | Loopback / tunnel |
 | `127.0.0.1:8093` | s1_monitor | new status site (container port 8000), moves to 8090 at cutover | Loopback / tunnel |
-| `127.0.0.1:8094` | s1_dash | public dashboard at `dash.sysone.co.za` (container port 8000) | Loopback / tunnel |
+| `127.0.0.1:3000` | s1_dash | public dashboard at `dash.sysone.co.za` (container port 8000) | Loopback / tunnel |
 | `100.102.46.89:9100` | printer_relay (host net) | PPNAM Station 1 label jobs to the office printer 192.168.1.45:9100 | Tailscale only |
 
 `scan_fleet_dashboard` defaults to 8091 but is pinned to 8092 in `host_vars/sysone.yml`
@@ -185,7 +185,7 @@ configured in Cloudflare Zero Trust, not in this repo. Known routes:
 | Hostname | Target on the host |
 |---|---|
 | `sysone.co.za` | `localhost:8090` (marketing_display) |
-| `dash.sysone.co.za` | `localhost:8094` (s1_dash) |
+| `dash.sysone.co.za` | `localhost:3000` (s1_dash) |
 | `charts.sysone.co.za` | `localhost:8091` (s1_reporter_charts) |
 | `charts-staging.sysone.co.za` | staging equivalent |
 
@@ -311,7 +311,7 @@ python -m unittest discover -s roles/printer_relay/tests
 
 `s1_dash` is the public dashboard at `https://dash.sysone.co.za`. It is a FastAPI container
 (`ghcr.io/systems-one/s1-dash`, private image pulled with the `Systems-One` account) bound to
-`127.0.0.1:8094`, with `SESSION_SECURE` and `TRUST_PROXY_IP` on because Cloudflare terminates
+`127.0.0.1:3000` (`s1_dash_port` in `host_vars/sysone.yml`; the role default is 8094), with `SESSION_SECURE` and `TRUST_PROXY_IP` on because Cloudflare terminates
 TLS in front of it. The role asserts that trust-proxy is only enabled with a loopback bind.
 
 - **Logins** come from `s1_dash_users` in `host_vars/sysone.yml` and are rendered to
@@ -323,7 +323,8 @@ TLS in front of it. The role asserts that trust-proxy is only enabled with a loo
 ### Cutover and rollback
 
 Grafana was retired when `dash.sysone.co.za` moved to s1_dash. The Cloudflare public hostname
-(Zero Trust, not in this repo) was changed from `localhost:3000` to `localhost:8094`. The
+(Zero Trust, not in this repo) still points at `localhost:3000`: s1_dash took over the port
+Grafana listened on, so the route was left as it was. Both cannot run at once. The
 `grafana` role is gone from the repo, but the container's data is deliberately kept on the
 host until the owner deletes it: the Docker volume `grafana_grafana_data` and the directory
 `/opt/grafana` (compose file, provisioning, dashboard checkout).
@@ -337,10 +338,12 @@ cd /opt/grafana && docker compose down
 To bring Grafana back while the volume and directory still exist:
 
 ```bash
+cd /opt/s1-dash && docker compose down       # s1_dash holds port 3000; free it first
 cd /opt/grafana && docker compose up -d      # listens on 127.0.0.1:3000
 ```
 
-then point the `dash.sysone.co.za` route in Cloudflare back to `localhost:3000`. The compose
+The Cloudflare route already points at `localhost:3000`, so nothing changes there. To run both,
+move s1_dash to another port (`s1_dash_port`) and give it its own public hostname. The compose
 file in `/opt/grafana` is the last one the retired role rendered; the role itself is in git
 history before the `chore: remove the grafana role` commit. To delete Grafana for good:
 `docker volume rm grafana_grafana_data && rm -rf /opt/grafana` (and remove the image).
