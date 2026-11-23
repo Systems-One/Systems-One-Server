@@ -198,3 +198,79 @@ def test_no_literal_secrets_in_role_yaml():
             if m:
                 val = m.group(2).strip()
                 assert val in ('""', "") or val.startswith('"{{'), line
+
+
+# ---- fix round 1 ----------------------------------------------------------
+
+def tasks():
+    return yaml.safe_load(read("tasks", "main.yml"))
+
+
+def test_trust_proxy_preview_false_production_true():
+    prod = compose()["services"]["s1-dash"]["environment"]
+    assert prod["TRUST_PROXY_IP"] == "true"
+    prev = compose(
+        s1_dash_bind_address="100.102.46.89",
+        s1_dash_session_secure=False,
+        s1_dash_trust_proxy_ip=False,
+    )["services"]["s1-dash"]["environment"]
+    assert prev["TRUST_PROXY_IP"] == "false"
+
+
+def test_host_vars_preview_disables_trust_proxy():
+    hv = hostvars()
+    assert hv["s1_dash_trust_proxy_ip"] is False
+    raw = open(os.path.join(REPO, "host_vars", "sysone.yml"), encoding="utf-8").read()
+    assert "three" in raw.lower()
+
+
+def test_trust_proxy_assertion_conditions():
+    guard = [
+        t for t in tasks()
+        if "assert" in t and any("trust_proxy" in c for c in t["assert"]["that"])
+    ]
+    assert len(guard) == 1
+    assert "no_log" not in guard[0]
+    assert "client-IP" in guard[0]["assert"]["fail_msg"] or "client IP" in guard[0]["assert"]["fail_msg"]
+    env = jinja2.Environment()
+    conds = [env.compile_expression(c) for c in guard[0]["assert"]["that"]]
+
+    def ok(trust, bind):
+        return all(
+            c(s1_dash_trust_proxy_ip=trust, s1_dash_bind_address=bind) for c in conds
+        )
+
+    assert ok(True, "127.0.0.1")
+    assert ok(True, "::1")
+    assert ok(True, "localhost")
+    assert not ok(True, "100.102.46.89")
+    assert not ok(True, "0.0.0.0")
+    assert ok(False, "100.102.46.89")
+    assert ok(False, "127.0.0.1")
+
+
+NASTY = 'a"b' + chr(92) + 'c$d#e: f' + chr(39) + 'g<h>&i'
+
+
+def test_compose_escapes_secret_values():
+    text = render(
+        "docker-compose.s1_dash.yml.j2",
+        s1_dash_db_pass="db" + NASTY,
+        s1_dash_session_secret="sess" + NASTY + "x" * 40,
+        s1_dash_db_user="u" + NASTY,
+    )
+    env = yaml.safe_load(text)["services"]["s1-dash"]["environment"]
+    assert env["DB_PASS"] == ("db" + NASTY).replace("$", "$$")
+    assert env["SESSION_SECRET"] == ("sess" + NASTY + "x" * 40).replace("$", "$$")
+    assert env["DB_USER"] == ("u" + NASTY).replace("$", "$$")
+
+
+def test_pull_changed_only_when_image_changes():
+    ts = tasks()
+    pull = [t for t in ts if t.get("command", "") == "docker compose pull"]
+    assert pull and pull[0].get("changed_when") is False
+    inspects = [t for t in ts if "docker image inspect" in str(t.get("command", ""))]
+    assert len(inspects) == 2
+    assert inspects[0].get("failed_when") is False
+    assert inspects[1].get("failed_when") is False
+    assert "stdout" in str(inspects[1]["changed_when"])

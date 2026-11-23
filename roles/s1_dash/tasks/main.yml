@@ -56,12 +56,24 @@
   no_log: true
   notify: restart s1-dash
 
+- name: Record current s1-dash image id
+  command: docker image inspect --format '{% raw %}{{.Id}}{% endraw %}' {{ s1_dash_image }}:{{ s1_dash_tag }}
+  register: s1_dash_image_before
+  changed_when: false
+  failed_when: false
+
 - name: Pull s1-dash image
   command: docker compose pull
   args:
     chdir: "{{ s1_dash_dir }}"
-  register: s1_dash_pull
-  changed_when: "'Pulled' in s1_dash_pull.stdout or 'Pulled' in s1_dash_pull.stderr"
+  changed_when: false
+
+# compose v2 prints "Pulled" even when the image is current, so compare ids.
+- name: Detect whether the pull changed the s1-dash image
+  command: docker image inspect --format '{% raw %}{{.Id}}{% endraw %}' {{ s1_dash_image }}:{{ s1_dash_tag }}
+  register: s1_dash_image_after
+  changed_when: s1_dash_image_after.stdout != s1_dash_image_before.stdout
+  failed_when: false
 
 - name: Start s1-dash container
   command: docker compose up -d
