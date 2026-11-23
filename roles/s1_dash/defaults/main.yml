@@ -1,0 +1,47 @@
+s1_dash_image: "ghcr.io/systems-one/s1-dash"
+s1_dash_tag: "latest"
+s1_dash_dir: "/opt/s1-dash"
+s1_dash_port: 8094
+# Production: loopback only, exposed via the Cloudflare tunnel. The preview
+# override (Tailscale address) lives in host_vars/sysone.yml until cutover.
+s1_dash_bind_address: "127.0.0.1"
+
+# Registry login for the private image (skipped when the token is empty)
+s1_dash_ghcr_user: ""
+s1_dash_ghcr_token: ""
+
+# HMAC key for the session cookie, at least 32 characters (set from vault)
+s1_dash_session_secret: ""
+s1_dash_session_days: 30
+# false only for a plain-HTTP preview bind
+s1_dash_session_secure: true
+# client IP from CF-Connecting-IP (behind cloudflared)
+s1_dash_trust_proxy_ip: true
+s1_dash_login_max_attempts: 10
+s1_dash_login_window_minutes: 15
+
+# Users rendered to users.json: [{login, password, role, customers?}]
+s1_dash_users: []
+
+s1_dash_db_host: "mssql"
+s1_dash_db_port: 1433
+s1_dash_db_name: "S1_Remote_Monitoring"
+s1_dash_db_user: "{{ mssql_rm_admin_login | default('admin') }}"
+s1_dash_db_pass: "{{ mssql_rm_admin_password | default('') }}"
+
+s1_dash_tz_offset_hours: 2
+s1_dash_min_items_day: 100
+s1_dash_min_items_hour: 30
+s1_dash_min_items_half_hour: 15
+s1_dash_min_items_packet: 5
+s1_dash_offline_gap_minutes: 11
+s1_dash_stale_days: 14
+s1_dash_expected_weeks: 8
+s1_dash_quiet_ratio: 0.2
+s1_dash_forecast_days: 30
+s1_dash_forecast_horizon_days: 60
+s1_dash_job_interval_minutes: 15
+s1_dash_cache_ttl_live: 30
+s1_dash_cache_ttl_history: 300
+s1_dash_query_timeout: 20
+s1_dash_explorer_max_points: 20000

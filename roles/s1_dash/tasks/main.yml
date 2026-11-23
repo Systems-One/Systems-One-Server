@@ -1,0 +1,60 @@
+- name: Validate s1_dash session secret
+  assert:
+    that:
+      - s1_dash_session_secret | length >= 32
+    fail_msg: >-
+      s1_dash_session_secret must be at least 32 characters.
+      Set it from vault_s1_dash_session_secret in host_vars.
+  no_log: true
+
+# The image runs as uid 1001 (appuser). The directory is group-owned by that
+# gid and closed to others; users.json is readable by that uid only.
+- name: Ensure s1-dash directory exists
+  file:
+    path: "{{ s1_dash_dir }}"
+    state: directory
+    owner: root
+    group: "1001"
+    mode: "0750"
+
+- name: Log in to ghcr.io (private image)
+  command: docker login ghcr.io -u {{ s1_dash_ghcr_user }} --password-stdin
+  args:
+    stdin: "{{ s1_dash_ghcr_token }}"
+  when: s1_dash_ghcr_token | length > 0
+  changed_when: false
+  no_log: true
+
+- name: Render users file
+  template:
+    src: users.json.j2
+    dest: "{{ s1_dash_dir }}/users.json"
+    owner: "1001"
+    group: "1001"
+    mode: "0600"
+  no_log: true
+  notify: restart s1-dash
+
+- name: Render docker-compose file
+  template:
+    src: docker-compose.s1_dash.yml.j2
+    dest: "{{ s1_dash_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: restart s1-dash
+
+- name: Pull s1-dash image
+  command: docker compose pull
+  args:
+    chdir: "{{ s1_dash_dir }}"
+  register: s1_dash_pull
+  changed_when: "'Pulled' in s1_dash_pull.stdout or 'Pulled' in s1_dash_pull.stderr"
+
+- name: Start s1-dash container
+  command: docker compose up -d
+  args:
+    chdir: "{{ s1_dash_dir }}"
+  register: s1_dash_compose
+  changed_when: "'Started' in s1_dash_compose.stdout or 'Recreated' in s1_dash_compose.stdout or 'Started' in s1_dash_compose.stderr or 'Recreated' in s1_dash_compose.stderr"

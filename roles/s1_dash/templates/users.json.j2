@@ -1,0 +1,9 @@
+[
+{% for u in s1_dash_users %}
+{% set o = {"login": u.login, "password": u.password, "role": u.role} %}
+{% if u.customers is defined %}
+{% set _ = o.update({"customers": u.customers}) %}
+{% endif %}
+  {{ o | tojson }}{{ "," if not loop.last else "" }}
+{% endfor %}
+]
