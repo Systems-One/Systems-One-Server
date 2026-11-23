@@ -27,7 +27,6 @@
   roles:
     - docker
     - cloudflared
-    - grafana
     - mqtt
     - role: mqtt_ingestor
       tags: mqtt_ingestor
