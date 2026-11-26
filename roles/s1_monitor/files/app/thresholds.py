@@ -1,6 +1,6 @@
 """Threshold lookup in the reporter's order: device row, customer-wide row, customer_config."""
 DEFAULT_CFG = {"has_dimension": True, "has_weight": False, "has_hand_scan": False,
-               "hand_scan_warn_pct": 15.0, "no_weight_warn_pct": 5.0, "storage_warn_pct": 80.0, "storage_bad_pct": 90.0,
+               "hand_scan_warn_pct": 15.0, "no_weight_warn_pct": 5.0, "storage_warn_pct": 85.0, "storage_bad_pct": 90.0,
                "good_read_warn_pct": 95.0, "good_read_bad_pct": 90.0, "no_dim_warn_pct": 5.0, "no_dim_bad_pct": 10.0}
 _CFG_FALLBACK = {
     "good_read_pct": ("good_read_warn_pct", "good_read_bad_pct", "low"),
