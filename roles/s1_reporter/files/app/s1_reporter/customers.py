@@ -10,7 +10,7 @@ class CustomerConfig:
     has_hand_scan: bool = False
     hand_scan_warn_pct: float = 15.0
     no_weight_warn_pct: float = 5.0
-    storage_warn_pct: float = 80.0
+    storage_warn_pct: float = 85.0
     storage_bad_pct: float = 90.0
     good_read_warn_pct: float = 95.0
     good_read_bad_pct: float = 90.0

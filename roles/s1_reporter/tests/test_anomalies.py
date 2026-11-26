@@ -57,7 +57,8 @@ class TestCapabilityRules(unittest.TestCase):
 class TestStorageAndOffline(unittest.TestCase):
     def test_storage_levels(self):
         storage = [{"machine_name": "DIM1", "location": "JHB", "usage_percent": 91},
-                   {"machine_name": "DIM2", "location": "JHB", "usage_percent": 85},
+                   {"machine_name": "DIM2", "location": "JHB", "usage_percent": 87},
+                   {"machine_name": "DIM4", "location": "JHB", "usage_percent": 84},
                    {"machine_name": "DIM3", "location": "JHB", "usage_percent": 50}]
         out = anomalies.detect([], storage, [], CFG, {})
         self.assertEqual([s for s, _ in out], ["bad", "warn"])

@@ -10,7 +10,7 @@ DEV = {"id": 3013, "serial_number": "019000-01-2", "customer": "MADIBANA", "loca
        "created_at": "2026-05-12T09:48:54Z", "status": "online", "offline_since": None, "application_running": True, "stopped_since": None, "os_version": "Win",
        "uptime_seconds": 100.0, "cpu_percent": 1.0, "mem_usage_pct": 40.0, "temp_celsius": 29.0, "c_usage": 44.0, "max_usage": 44.0, "last_seen": "2026-09-09T11:30:00Z"}
 CFG = {"customer": "MADIBANA", "has_dimension": True, "has_weight": True, "has_hand_scan": True, "hand_scan_warn_pct": 15.0, "no_weight_warn_pct": 5.0,
-       "storage_warn_pct": 80.0, "storage_bad_pct": 90.0, "good_read_warn_pct": 95.0, "good_read_bad_pct": 90.0, "no_dim_warn_pct": 5.0, "no_dim_bad_pct": 10.0, "reports_enabled": True}
+       "storage_warn_pct": 85.0, "storage_bad_pct": 90.0, "good_read_warn_pct": 95.0, "good_read_bad_pct": 90.0, "no_dim_warn_pct": 5.0, "no_dim_bad_pct": 10.0, "reports_enabled": True}
 L = dt.datetime  # local (SAST) bucket starts as the SQL would return
 
 def fake_query(sql, params=()):

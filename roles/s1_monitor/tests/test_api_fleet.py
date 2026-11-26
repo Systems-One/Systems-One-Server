@@ -8,9 +8,9 @@ NOW = dt.datetime(2026, 9, 9, 11, 0)
 DEV = {"id": 3, "serial_number": "018389-01-1", "customer": "PEPKOR", "location": "JBH", "machine_name": "DIM1", "reporting_enabled": True,
        "muted_until": None, "created_at": "2026-01-15T10:27:15Z", "status": "online", "offline_since": None, "application_running": True,
        "stopped_since": None, "os_version": "Windows", "uptime_seconds": 1000.0, "cpu_percent": 3.0, "mem_usage_pct": 40.0, "temp_celsius": 29.9,
-       "c_usage": 82.0, "max_usage": 82.0, "last_seen": "2026-09-09T10:58:00Z"}
+       "c_usage": 92.0, "max_usage": 92.0, "last_seen": "2026-09-09T10:58:00Z"}
 CFG = {"customer": "PEPKOR", "has_dimension": True, "has_weight": False, "has_hand_scan": False, "hand_scan_warn_pct": 15.0, "no_weight_warn_pct": 5.0,
-       "storage_warn_pct": 80.0, "storage_bad_pct": 90.0, "good_read_warn_pct": 95.0, "good_read_bad_pct": 90.0, "no_dim_warn_pct": 5.0, "no_dim_bad_pct": 10.0, "reports_enabled": True}
+       "storage_warn_pct": 85.0, "storage_bad_pct": 90.0, "good_read_warn_pct": 95.0, "good_read_bad_pct": 90.0, "no_dim_warn_pct": 5.0, "no_dim_bad_pct": 10.0, "reports_enabled": True}
 
 def fake_query(sql, params=()):
     if sql is F.SQL_DEVICES: return [DEV]
@@ -44,7 +44,7 @@ def test_fleet_strip_devices_and_attention():
     d = r["devices"][0]
     assert d["state"] == "online" and d["today"]["good_read_pct"] == 99.0 and d["d30"]["good_read_pct"] == 98.33
     assert len(d["spark24"]) == 24 and d["spark24"][-1] == 120
-    assert r["attention"][0]["rule"] == "C: drive" and r["attention"][0]["severity"] == "warn"
+    assert r["attention"][0]["rule"] == "C: drive" and r["attention"][0]["severity"] == "bad"
 
 def test_fleet_customer_filter_and_stale_flag(monkeypatch):
     # A live ttl of 0 means every request re-validates against the DB instead of short-circuiting

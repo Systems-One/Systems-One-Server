@@ -30,7 +30,7 @@ const API = {
 function errorPanel(el,err){ el.innerHTML='<div class="notice">'+esc(err&&err.status?'Error '+err.status+': '+err.message:String(err&&err.message||err))+'</div>'; }
 
 /* ---------- config and thresholds, from /api/meta ---------- */
-function cfg(cust){ return (API.meta&&API.meta.customers.find(c=>c.customer===cust))||{has_dimension:true,has_weight:false,has_hand_scan:false,hand_scan_warn_pct:15,no_weight_warn_pct:5,storage_warn_pct:80,storage_bad_pct:90,good_read_warn_pct:95,good_read_bad_pct:90,no_dim_warn_pct:5,no_dim_bad_pct:10}; }
+function cfg(cust){ return (API.meta&&API.meta.customers.find(c=>c.customer===cust))||{has_dimension:true,has_weight:false,has_hand_scan:false,hand_scan_warn_pct:15,no_weight_warn_pct:5,storage_warn_pct:85,storage_bad_pct:90,good_read_warn_pct:95,good_read_bad_pct:90,no_dim_warn_pct:5,no_dim_bad_pct:10}; }
 function thr(deviceId,metric){ const r=((API.meta&&API.meta.thresholds[String(deviceId)])||{})[metric]; return r||{warn:null,bad:null,direction:'high',source:'none'}; }
 
 /* ---------- helpers, unchanged from the approved demo ---------- */

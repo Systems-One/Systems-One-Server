@@ -99,6 +99,14 @@ class TestShippedMigrations(unittest.TestCase):
         self.assertIn("N'DIM2'", sql)
         self.assertIn("N'JBH'", sql)
 
+    def test_storage_warn_85_runs_once_and_only_moves_the_old_default(self):
+        sql = self._read("003_storage_warn_85.sql")
+        self.assertIn("IF NOT EXISTS (SELECT 1 FROM sys.default_constraints", sql)
+        self.assertIn("CONSTRAINT DF_customer_config_storage_warn_pct DEFAULT 85.0 FOR storage_warn_pct", sql)
+        self.assertIn("SET storage_warn_pct = 85.0", sql)
+        self.assertIn("WHERE storage_warn_pct = 80.0", sql)
+        self.assertEqual(len(db.split_batches(sql)), 1)   # the marker check and the update stay in one batch
+
 
 if __name__ == "__main__":
     unittest.main()
