@@ -8,6 +8,13 @@ and this repository builds the one host that stores their data and turns it into
 alerts and reports for Systems One staff and customer logins.
 </p>
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/systems-one-dark.png">
+    <img src="docs/assets/systems-one.png" height="52" alt="Systems One">
+  </picture>
+</p>
+
 <p>
 <a href="#deploy">Deploy</a> ·
 <a href="#documentation">Documentation</a> ·
