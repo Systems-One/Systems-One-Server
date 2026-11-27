@@ -1,4 +1,346 @@
-# Systems-One-Server
+<div align="center">
+
+<h1>Systems-One-Server</h1>
+
+<p>
+The server behind Systems One remote monitoring. Scan stations at customer sites report in,<br>
+and this repository builds the one host that stores their data and turns it into dashboards,<br>
+alerts and reports for Systems One staff and customer logins.
+</p>
+
+<p>
+<a href="#deploy">Deploy</a> ·
+<a href="#documentation">Documentation</a> ·
+<a href="VAULT_VARS.md">Secrets reference</a> ·
+<a href="roles/backup/README.md">Backup and restore</a> ·
+<a href="PRODUCT.md">Product context</a>
+</p>
+
+</div>
+
+## Contents
+
+- [What it does](#what-it-does)
+- [What the system can do](#what-the-system-can-do)
+- [How it fits together](#how-it-fits-together)
+- [Status](#status)
+- [Get started](#get-started)
+- [Deploy](#deploy)
+- [Documentation](#documentation)
+- [Repository layout](#repository-layout)
+- [Reference](#reference)
+
+## What it does
+
+Scan stations and other devices at customer sites publish telemetry over MQTT. This
+repository is the Ansible code that installs and configures everything on the single
+production server (`sysone`, also called `s1_server`) that receives that telemetry, stores
+it in SQL Server and shows it to people. Every service is a Docker container deployed by one
+Ansible role.
+
+- Staff see fleet health, throughput and scan quality on web dashboards and on the server's
+  own console screen.
+- Customers sign in to a dashboard that shows only their own sites.
+- Microsoft Teams receives alerts and scheduled reports.
+- The server is reached from the internet through a Cloudflare Tunnel on `sysone.co.za`.
+- There is no packaged release. A deploy is an Ansible run on the server, started by hand or
+  from GitHub Actions.
+
+## What the system can do
+
+"Tested in CI" below means the role has unit tests that run in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml). The last CI run on `master`
+(26 November 2026) passed. Test counts are `def test_` functions counted in the source, not
+a test-runner total.
+
+### Data collection and storage
+
+In the production play. The ingestor is tested in CI; the broker and database roles have no
+tests of their own.
+
+| Area | Capability |
+|---|---|
+| MQTT broker (`mqtt`) | Mosquitto 2 on ports 1883 (TCP) and 9001 (WebSockets), with persistence and password-only access. |
+| Ingest (`mqtt_ingestor`) | One process subscribed to `systems-one/#`, `systemsone/#` and `$SYS/#`. Writes device telemetry and broker statistics to SQL Server. |
+| Durability | Messages pass through a SQLite spool (1 GiB cap, drops oldest when full) and a batched writer that retries with backoff. Messages that fail every retry go to a dead-letter table. |
+| Filtering | Optional allowlist of customers and locations. Empty means allow all. |
+| Ingest health | `/health` endpoint and Prometheus metrics. |
+| Database (`mssql`) | SQL Server 2022 container. Creates the `S1_Remote_Monitoring` database, the application login and the schema. |
+
+### Dashboards
+
+All four web dashboards and the console screen are in the production play. `s1_monitor`,
+`s1_dash` (role files only) and `s1_dashboard` are tested in CI. `scan_fleet_dashboard` has
+tests that CI does not run. `marketing_display` has no tests.
+
+| Area | Capability |
+|---|---|
+| Customer and operations dashboard (`s1_dash`) | Public at `dash.sysone.co.za`. Per-login access: admin, internal viewer, or viewer limited to named customers. The application is built in a separate repository (`Systems-One-Dash`); this repository only pulls and configures its image. |
+| Fault diagnosis site (`s1_monitor`) | Fleet, Device and Trends views with charts, and a host-health snapshot every 15 minutes. Written to replace the two dashboards below. |
+| Status page (`marketing_display`) | "S1 Remote Monitoring" status page with a history view. Read-only. |
+| Fleet API (`scan_fleet_dashboard`) | JSON API for customers, machines, performance and throughput (KPIs, intraday, per machine), with per-customer thresholds and optional per-user customer scoping. |
+| Console screen (`s1_dashboard`) | Status screen on the server's physical console (TTY1): scan totals, host metrics, Docker health and a problems-only log pane. |
+
+### Alerts and reports
+
+In the production play and tested in CI.
+
+| Area | Capability |
+|---|---|
+| Teams alerts (`s1_reporter`) | Device status sync every 20 minutes; alert check every 20 minutes on weekdays. |
+| Teams reports (`s1_reporter`) | Daily report at 06:00 on weekdays, monthly report at 06:30 on the 1st, stale-device digest at 07:00 on Mondays. Times are host-local. |
+| Report charts | Chart images are served by an nginx container and published as `charts.sysone.co.za`. |
+| Alert thresholds (`s1_baselines`) | Recomputes per-device warn and bad thresholds from 60 days of statistics every Sunday at 02:00, with a dry-run mode to preview. |
+
+### Delivery and operations
+
+| Area | Capability | State |
+|---|---|---|
+| Host setup (`docker`) | Installs Docker Engine and the Compose plugin and creates the shared `infra` network. | Tested in CI with Molecule. |
+| Internet access (`cloudflared`) | Cloudflare Tunnel client. Web UIs bind to loopback and are reached only through the tunnel. | In the production play, no tests. |
+| CI | yamllint, unit tests, ansible-lint (warning only), playbook syntax check, Molecule. | Running and passing. |
+| Deploy workflow | Manual GitHub Actions run on a self-hosted runner on the server. Refuses to deploy over uncommitted changes, can be limited to one role, tags each deploy. | Written. See [Status](#status). |
+| Rollback workflow | Checks out an earlier `deploy-*` tag and re-runs the play. | Written. See [Status](#status). |
+| Offsite backup (`backup`) | Nightly restic backup of the database and the Mosquitto volume to Backblaze B2 (7 daily, 4 weekly, 6 monthly), and a gate that stops a deploy when the last good backup is too old. | Written, switched off in the repository configuration, no tests. |
+| Label printing (`printer_relay`) | TCP relay so PPNAM Station 1 can print to an office label printer over Tailscale. Refuses connections while the printer is off. | Enabled for production, tested in CI. |
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    dev["Scan stations<br/>at customer sites"]
+    web["Browser"]
+    teams["Microsoft Teams"]
+    b2["Backblaze B2"]
+
+    subgraph host["sysone (one Docker host)"]
+        direction LR
+        mq["mosquitto"]
+        ing["mqtt_ingestor"]
+        db[("mssql<br/>S1_Remote_Monitoring")]
+        dash["s1_dash"]
+        other["s1_monitor<br/>marketing_display<br/>scan_fleet_dashboard"]
+        rep["s1_reporter<br/>s1_baselines"]
+        charts["s1_reporter_charts"]
+        tty["s1_dashboard<br/>(console)"]
+        bk["backup"]
+        cf["cloudflared"]
+    end
+
+    dev -- "MQTT" --> mq
+    mq --> ing
+    ing --> db
+    db --> dash
+    db --> other
+    db --> rep
+    db --> tty
+    rep -- "Adaptive Cards" --> teams
+    rep -- "PNG charts" --> charts
+    db --> bk
+    mq --> bk
+    bk --> b2
+    web -- "sysone.co.za" --> cf
+    cf --> dash
+    cf --> other
+    cf --> charts
+```
+
+| Part | What it does | Folder |
+|---|---|---|
+| Plays and inventories | Decide which roles run on which host. `site.yml` imports `webservers.yml` and `dbservers.yml`; both target the same machine. | [repository root](#repository-layout) |
+| `docker` | Installs Docker and creates the shared network. | [`roles/docker`](roles/docker) |
+| `cloudflared` | Cloudflare Tunnel client. | [`roles/cloudflared`](roles/cloudflared) |
+| `mqtt` | Mosquitto broker. | [`roles/mqtt`](roles/mqtt) |
+| `mqtt_ingestor` | Moves MQTT messages into SQL Server. | [`roles/mqtt_ingestor`](roles/mqtt_ingestor) |
+| `mssql` | SQL Server and the database schema. | [`roles/mssql`](roles/mssql) |
+| `s1_dash` | Pulls and configures the public dashboard image and its logins. | [`roles/s1_dash`](roles/s1_dash) |
+| `s1_monitor` | Fault diagnosis site. | [`roles/s1_monitor`](roles/s1_monitor) |
+| `marketing_display` | Status page. | [`roles/marketing_display`](roles/marketing_display) |
+| `scan_fleet_dashboard` | Fleet dashboard API. | [`roles/scan_fleet_dashboard`](roles/scan_fleet_dashboard) |
+| `s1_dashboard` | Console status screen. | [`roles/s1_dashboard`](roles/s1_dashboard) |
+| `s1_reporter` | Teams alerts, reports and the chart server. | [`roles/s1_reporter`](roles/s1_reporter) |
+| `s1_baselines` | Weekly alert-threshold recompute. | [`roles/s1_baselines`](roles/s1_baselines) |
+| `backup` | Offsite backup and the pre-deploy backup gate. | [`roles/backup`](roles/backup) |
+| `printer_relay` | Label printer relay. | [`roles/printer_relay`](roles/printer_relay) |
+| `systems_one_ingest` | Retired ingestor. Not used by any play. | [`roles/systems_one_ingest`](roles/systems_one_ingest) |
+
+All containers join one Docker network, `infra`, and reach each other by name. `cloudflared`
+runs on the host network in production, so anything served through the tunnel must publish a
+loopback port. Ports, tables and logins are listed in the [Reference](#reference).
+
+## Status
+
+Checked against the repository on 27 November 2026. This table says what the repository
+contains and what CI proves. It does not say what is running on the server today.
+
+| Part | State | Tests in the repo |
+|---|---|---|
+| `mqtt_ingestor` | In the production play. Tested in CI. | 37 in 8 files |
+| `s1_reporter` | In the production play. Tested in CI. | 107 in 18 files |
+| `s1_baselines` | In the production play. Tested in CI. | 34 in 6 files |
+| `s1_monitor` | In the production play on port 8093. It has not yet replaced `marketing_display` and `scan_fleet_dashboard`, which are still deployed beside it. Tested in CI. | 90 in 19 files |
+| `s1_dash` | In the production play on port 3000, pinned by `s1_dash_port`. CI tests the role's files only; the application code is not in this repository. | 16 in 1 file |
+| `s1_dashboard` | In the production play. Tested in CI. | 22 in 1 file |
+| `printer_relay` | Enabled for production only. Tested in CI. | 9 in 1 file |
+| `scan_fleet_dashboard` | In the production play. Has tests, but CI does not run them. | 29 in 6 files |
+| `marketing_display` | In the production play. No tests. | none |
+| `mqtt`, `mssql`, `cloudflared` | In the plays. No tests beyond the playbook syntax check. | none |
+| `docker` | In both plays. Converged and verified in a container by Molecule in CI. | Molecule |
+| `backup` | Written. `backup_enabled` is `false` in `group_vars/all.yml` and neither host file turns it on, so the nightly job and the deploy gate are off as configured here. The restore runbook asks to be tested on staging first; the repository holds no record that it was. | none |
+| `systems_one_ingest` | Retired, but still in the repository and still tested in CI. | 9 in 1 file |
+| Deploy and Rollback workflows | Written. On 27 November 2026 GitHub listed no runs of the Deploy workflow and the remote had no `deploy-*` tags, so there is no evidence here that either has run. Both cover `webservers.yml` only. | none |
+| Runner install script | [`scripts/install-github-actions-runner.sh`](scripts/install-github-actions-runner.sh) registers the runner against `Jwagener1/Systems-One-Server`. The repository now lives at `Systems-One/Systems-One-Server`. | none |
+| Releases | None. No GitHub releases and no version tags. | |
+
+Total: 353 test functions in 61 test files, of which CI runs 324.
+
+Other known gaps are listed under [Known rough edges](#known-rough-edges) in the Reference.
+
+## Get started
+
+CI uses Python 3.12. The Molecule test also needs Docker.
+
+```bash
+pip install -r requirements.txt
+
+# Check the playbooks parse. The values are placeholders; nothing is contacted.
+echo "ci-placeholder" > .vault_pass
+ansible-playbook site.yml --syntax-check -i production \
+  -e "mssql_sa_password=test mssql_app_login_password=test mqtt_password=test cloudflare_tunnel_token=test backup_b2_account_id=test backup_b2_account_key=test backup_restic_password=test"
+
+# Unit tests that need only the standard library
+python roles/s1_dashboard/tests/test_dashboard.py
+python -m unittest discover -s roles/printer_relay/tests
+python -m unittest discover -s roles/systems_one_ingest/tests
+```
+
+The other test suites need extra packages. CI installs them like this:
+
+```bash
+pip install pyyaml
+python -m unittest discover -s roles/s1_reporter/tests
+python -m unittest discover -s roles/s1_baselines/tests
+
+pip install -r roles/mqtt_ingestor/files/app/requirements.txt
+python -m unittest discover -s roles/mqtt_ingestor/tests
+
+pip install -r roles/s1_monitor/tests/requirements-dev.txt pyodbc==5.2.0
+python -m pytest roles/s1_monitor/tests -q
+
+pip install -r roles/s1_dash/tests/requirements-dev.txt
+python -m pytest roles/s1_dash/tests -q
+```
+
+`.vault_pass` is gitignored. The real vault password is needed only to read or edit
+`group_vars/vault.yml`, not for the commands above.
+
+> [!WARNING]
+> Do not run `ansible-playbook` without `--syntax-check` on your own machine. Both
+> inventories use `ansible_connection: local`, so a real run configures whatever machine it
+> is started on. Real runs belong on the server; see [Deploy](#deploy).
+
+## Deploy
+
+There is no installer and no release to download. Ansible runs on the server itself, from
+the checkout at `/home/s1/Systems-One-Server`.
+
+> [!WARNING]
+> These steps change the live production server: they rebuild and restart containers that
+> customers and devices are using. `dbservers.yml` touches the production database
+> container.
+
+From GitHub Actions:
+
+1. Merge the change to `master` and wait for CI to pass.
+2. Open **Actions**, choose **Deploy** and run the workflow. Leave `ref` as `master`, or
+   give a branch, tag or commit. To deploy one role only, put its name in `tags`.
+3. The workflow syntax-checks the ref, then the self-hosted runner on the server checks it
+   out, runs `webservers.yml` and pushes a `deploy-YYYYMMDD-HHMMSS` tag. It stops if the
+   checkout on the server has uncommitted changes.
+4. To go back, run the **Rollback** workflow with an earlier `deploy-*` tag.
+
+By hand, on the server:
+
+```bash
+ssh s1_server
+cd /home/s1/Systems-One-Server
+git fetch origin && git merge --ff-only origin/master
+ansible-playbook -i production webservers.yml                        # all app roles
+ansible-playbook -i production webservers.yml --tags s1_reporter     # one role
+ansible-playbook -i production dbservers.yml                         # mssql and backup
+```
+
+Neither workflow runs `dbservers.yml`. Database and backup changes are always applied by
+hand. More detail, including staging and the list of role tags, is under
+[Deploying](#deploying) in the Reference.
+
+## Documentation
+
+There is no separate documentation index; this table is the index.
+
+| I want to | Read |
+|---|---|
+| Understand who the product is for and how its screens should look | [PRODUCT.md](PRODUCT.md) |
+| Find out which secrets the vault must hold | [VAULT_VARS.md](VAULT_VARS.md) |
+| Turn offsite backup on or off, or restore after a disaster | [roles/backup/README.md](roles/backup/README.md) |
+| Look up ports, containers, database tables, tunnel routes and logins | [Reference](#reference) below |
+| Read why offsite backup was designed the way it was | [Design](docs/superpowers/specs/2026-08-11-offsite-backup-b2-design.md), [plan](docs/superpowers/plans/2026-08-11-offsite-backup-b2.md) |
+| Read how deploy and rollback were designed | [Design](docs/superpowers/specs/2026-08-11-cicd-resilience-deploy-rollback-design.md), [plan](docs/superpowers/plans/2026-08-11-cicd-resilience-deploy-rollback.md) |
+| Read how the single ingestor replaced the earlier ones | [Design](docs/superpowers/specs/2026-08-12-ingestor-consolidation-design.md), [plan](docs/superpowers/plans/2026-08-12-mqtt-ingestor-consolidation-build.md) |
+| Read how Teams notifications replaced email | [Design](docs/superpowers/specs/2026-08-11-teams-notifications-design.md), [plan](docs/superpowers/plans/2026-08-11-teams-notifications.md) |
+| Read the later overhaul of the reporter | [Design](docs/superpowers/specs/2026-09-09-s1-reporter-overhaul-design.md), [plan](docs/superpowers/plans/2026-09-09-s1-reporter-overhaul.md) |
+| Read how alert thresholds are computed | [Design](docs/superpowers/specs/2026-09-09-s1-baselines-role-design.md), [plan](docs/superpowers/plans/2026-09-09-s1-baselines-role.md) |
+| Read the design of the fault diagnosis site | [Design](docs/superpowers/specs/2026-09-09-s1-monitor-design.md), [plan](docs/superpowers/plans/2026-09-09-s1-monitor.md) |
+| Read how `s1_dash` replaced Grafana | [Design](docs/superpowers/specs/2026-10-30-s1-dash-design.md), [plan](docs/superpowers/plans/2026-10-30-s1-dash.md) |
+| Read the design of the console screen | [Design](docs/superpowers/specs/2026-07-20-tty1-dashboard-overhaul-design.md), [plan](docs/superpowers/plans/2026-07-20-tty1-dashboard-overhaul.md) |
+| Read the plan for the fleet dashboard API | [Plan](docs/superpowers/plans/2026-07-20-scan-fleet-dashboard.md) (no separate design document) |
+
+The design documents and plans are dated records of what was intended when they were
+written. Where they differ from the code, the code is current.
+
+## Repository layout
+
+| Folder | What is in it |
+|---|---|
+| [`roles/`](roles) | One Ansible role per service: tasks, templates, defaults, and for the Python services the application code under `files/` and its tests under `tests/`. |
+| [`group_vars/`](group_vars) | Settings shared by all hosts (`all.yml`), database settings (`dbservers.yml`) and the encrypted secrets (`vault.yml`). |
+| [`host_vars/`](host_vars) | Per-host settings: `sysone.yml` for production, `sysone_staging.yml` for staging. |
+| [`docs/superpowers/`](docs/superpowers) | Dated design documents (`specs/`) and implementation plans (`plans/`). |
+| [`.github/workflows/`](.github/workflows) | `ci.yml`, `deploy.yml` and `rollback.yml`. |
+| [`molecule/`](molecule) | Molecule scenarios for the `docker` role: `default` (converge and verify) and `syntax`. |
+| [`scripts/`](scripts) | `install-github-actions-runner.sh`, which installs the self-hosted runner on the server. |
+| [`.impeccable/`](.impeccable) | `config.json`: one ignore rule for the Impeccable design checker, tied to the brand rules in `PRODUCT.md`. |
+
+| File in the root | What it is |
+|---|---|
+| [`site.yml`](site.yml) | Imports the two plays below. |
+| [`webservers.yml`](webservers.yml) | Play for every application role. |
+| [`dbservers.yml`](dbservers.yml) | Play for `mssql` and `backup`. |
+| [`production`](production), [`staging`](staging) | Inventories for the hosts `sysone` and `sysone_staging`. |
+| [`ansible.cfg`](ansible.cfg) | Ansible defaults: inventory, roles path, vault password file. |
+| [`requirements.txt`](requirements.txt) | Python tools for working on the repository: Ansible, ansible-lint, yamllint, Molecule. |
+| [`VAULT_VARS.md`](VAULT_VARS.md) | Every vault variable and what it is for. |
+| [`PRODUCT.md`](PRODUCT.md) | Product context for user-interface work. |
+
+## Reference
+
+The blocks below hold the text of the previous README, unchanged. Some of it records the
+state of the live server on the date it was written and could not be re-checked from the
+repository. Where a block differs from the sections above, the sections above were checked
+against the repository on 27 November 2026. The known differences are:
+
+- **Architecture diagram:** shows `s1_monitor` on port 8090. Production pins it to 8093
+  (`s1_monitor_port` in `host_vars/sysone.yml`); 8090 is the role default and still belongs
+  to `marketing_display`.
+- **Tests and CI:** CI also runs the `s1_baselines`, `s1_monitor`, `s1_dash` and
+  `printer_relay` tests, and triggers on `main` as well as `master`. It does not run the
+  `scan_fleet_dashboard` tests.
+- **Deploying:** `printer_relay` also carries a tag in `webservers.yml`.
+- **Services:** the monthly report runs at 06:30 on the 1st.
+- **Repository layout:** `molecule/` holds two scenarios, `default` and `syntax`.
+
+<details>
+<summary><b>Introduction and contents of the previous README</b></summary>
 
 Ansible repository that builds and runs the Systems One remote-monitoring platform on a
 single production host (`sysone`, also known as `s1_server`). Every service is a Docker
@@ -24,7 +366,11 @@ fleet health, throughput and scan-quality views.
 - [s1_dash](#s1_dash)
 - [Known rough edges](#known-rough-edges)
 
-## Architecture
+</details>
+
+<a id="architecture"></a>
+<details>
+<summary><b>Architecture</b></summary>
 
 ```mermaid
 flowchart LR
@@ -77,7 +423,11 @@ flowchart LR
 Data path in one line: **device to Mosquitto to mqtt_ingestor to SQL Server to s1_dash,
 other dashboards and the reporter**.
 
-## Host and network layout
+</details>
+
+<a id="host-and-network-layout"></a>
+<details>
+<summary><b>Host and network layout</b></summary>
 
 One Ubuntu host runs everything. Two Ansible plays target it, both resolving to the same
 machine in the `production` inventory:
@@ -118,7 +468,11 @@ machine in the `production` inventory:
 `scan_fleet_dashboard` defaults to 8091 but is pinned to 8092 in `host_vars/sysone.yml`
 because 8091 is already owned by the chart server.
 
-## Services
+</details>
+
+<a id="services"></a>
+<details>
+<summary><b>Services</b></summary>
 
 Each role renders a `docker-compose.yml` under `/opt/<service>` on the host and runs
 `docker compose up -d`. Application code lives in the role's `files/` directory and is
@@ -152,7 +506,11 @@ Which service talks to what:
 | `s1_baselines` | reads `device_statistics`, writes `alert_thresholds` | `admin` |
 | `backup` | dumps `mssql`, tars the Mosquitto volume | `sa` inside the container |
 
-## Data
+</details>
+
+<a id="data"></a>
+<details>
+<summary><b>Data</b></summary>
 
 One database, `S1_Remote_Monitoring`, on the `mssql` container. The schema is created by
 `roles/mssql/templates/bootstrap.remote_monitoring.sql.j2` and extended by
@@ -176,7 +534,11 @@ Persistent Docker volumes: `mssql_data`, `mosquitto_data`,
 `settings-data`. (The retired Grafana volume `grafana_grafana_data` is kept on the host for
 rollback, see [s1_dash](#s1_dash).)
 
-## Public exposure (Cloudflare Tunnel)
+</details>
+
+<a id="public-exposure-cloudflare-tunnel"></a>
+<details>
+<summary><b>Public exposure (Cloudflare Tunnel)</b></summary>
 
 Nothing except MQTT and SQL Server is published beyond
 loopback. Web UIs are reached through the Cloudflare Tunnel, whose public hostnames are
@@ -193,7 +555,11 @@ The scan-fleet API is also loopback-bound and served the
 same way. Because `cloudflared` runs on the host network, every tunnel target must be a
 `localhost:<port>` address, never a container name.
 
-## Also on the box, not managed here
+</details>
+
+<a id="also-on-the-box-not-managed-here"></a>
+<details>
+<summary><b>Also on the box, not managed here</b></summary>
 
 `docker ps` on `sysone` shows containers this repo does not own. Leave them alone:
 
@@ -207,7 +573,10 @@ Directories under `/home/s1` such as `mqtt-ingestor` and `broker-ingestor` are t
 hand-deployed ingestors. Their containers are no longer running; `mqtt_ingestor` replaced
 both.
 
-## Repository layout
+</details>
+
+<details>
+<summary><b>Repository layout</b></summary>
 
 ```
 ansible.cfg                inventory=production, roles_path=roles, vault_password_file=.vault_pass
@@ -229,7 +598,11 @@ VAULT_VARS.md              reference for every vault variable
 PRODUCT.md                 product context for UI work
 ```
 
-## Deploying
+</details>
+
+<a id="deploying"></a>
+<details>
+<summary><b>Deploying</b></summary>
 
 Ansible runs **on the server**, from the checkout at `/home/s1/Systems-One-Server`. There is
 no separate control node.
@@ -265,7 +638,11 @@ Staging:
 ansible-playbook -i staging site.yml
 ```
 
-## Secrets
+</details>
+
+<a id="secrets"></a>
+<details>
+<summary><b>Secrets</b></summary>
 
 All secrets live in `group_vars/vault.yml`, encrypted with Ansible Vault. The vault
 password sits in the gitignored `.vault_pass` on each machine that runs Ansible. Every
@@ -279,14 +656,22 @@ ansible-vault edit group_vars/vault.yml
 Plays load the vault file explicitly in `pre_tasks` and then assert the variables they need,
 so a missing secret fails early with a clear message.
 
-## Backups
+</details>
+
+<a id="backups"></a>
+<details>
+<summary><b>Backups</b></summary>
 
 Nightly restic snapshots of the RM database and the Mosquitto volume go to Backblaze B2,
 with 7 daily, 4 weekly and 6 monthly retention. When enabled, both plays are gated on a
 recent successful backup before touching anything. Enable, disable and disaster-recovery
 steps are in `roles/backup/README.md`.
 
-## Tests and CI
+</details>
+
+<a id="tests-and-ci"></a>
+<details>
+<summary><b>Tests and CI</b></summary>
 
 `ci.yml` runs on every push and pull request to `master`:
 
@@ -307,7 +692,11 @@ python -m pytest roles/s1_dash/tests
 python -m unittest discover -s roles/printer_relay/tests
 ```
 
-## s1_dash
+</details>
+
+<a id="s1_dash"></a>
+<details>
+<summary><b>s1_dash</b></summary>
 
 `s1_dash` is the public dashboard at `https://dash.sysone.co.za`. It is a FastAPI container
 (`ghcr.io/systems-one/s1-dash`, private image pulled with the `Systems-One` account) bound to
@@ -351,7 +740,11 @@ history before the `chore: remove the grafana role` commit. To delete Grafana fo
 There is no automated legacy-retirement play in this repo: retired services (Node-RED,
 Grafana) are removed from the host by hand and the role is deleted.
 
-## Known rough edges
+</details>
+
+<a id="known-rough-edges"></a>
+<details>
+<summary><b>Known rough edges</b></summary>
 
 Starting points for the overhaul, all confirmed against the repo or the live host:
 
@@ -365,3 +758,5 @@ Starting points for the overhaul, all confirmed against the repo or the live hos
   cutover.
 - `ppnam-sync`, `wetty` and the Eskom app share the host but sit outside Ansible.
 - The `mqtt` role ships an empty `Caddyfile.j2` that nothing uses.
+
+</details>
